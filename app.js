@@ -1,9 +1,10 @@
 const DEFAULT_CODE = '';
 
 const COLOR_PRESETS = [
+  { name: 'GitHub Dark', hex: '#0D1117' },
+  { name: 'Title Dark', hex: '#1B1F25' },
   { name: 'Dark Dimmed', hex: '#22272E' },
   { name: 'Title Slate', hex: '#2D333B' },
-  { name: 'GitHub Dark', hex: '#0D1117' },
   { name: 'VS Code', hex: '#1E1E1E' },
   { name: 'Tokyo Night', hex: '#1A1B26' },
   { name: 'One Dark', hex: '#282C34' },
@@ -361,7 +362,7 @@ function hsvToHex(h, s, v) {
 function enhanceColorPicker({ controlEl, triggerEl, inputEl, hexLabelEl, swatchEl, defaultHex, onChange }) {
   if (!controlEl || !triggerEl || !inputEl) return;
 
-  const fallbackDefault = normalizeHex(defaultHex || inputEl.value) || '#22272E';
+  const fallbackDefault = normalizeHex(defaultHex || inputEl.value) || '#0D1117';
   let currentHex = normalizeHex(inputEl.value) || fallbackDefault;
   let hsv = (() => {
     const { r, g, b } = hexToRgb(currentHex);
@@ -1011,7 +1012,7 @@ function triggerDownload(urlOrBlob, filename) {
   link.remove();
 
   if (isBlob) {
-    setTimeout(() => URL.revokeObjectURL(href), 2000);
+    setTimeout(() => URL.revokeObjectURL(href), 15000);
   }
 }
 
@@ -1036,15 +1037,20 @@ function getMaxPixelRatio(targetEl) {
   return Math.min(desired, safeMax);
 }
 
-async function captureSnapshot(targetEl, methodName, options) {
+async function captureSnapshot(targetEl, methodName, options = {}) {
   if (!window.htmlToImage || typeof window.htmlToImage[methodName] !== 'function') {
     throw new Error('The image export library (html-to-image) did not load. Please check your connection and reload.');
   }
 
   const resolved = getResolvedLanguage();
+  const forceInlineIcon = Boolean(options.skipFonts);
   els.snapshotNode.classList.add('is-exporting');
   const prevScrollLeft = els.snapshotCodeWrap.scrollLeft;
   els.snapshotCodeWrap.scrollLeft = 0;
+
+  if (forceInlineIcon) {
+    renderLanguageIcon(resolved.lang, true);
+  }
 
   try {
     return await window.htmlToImage[methodName](targetEl, options);
@@ -1061,17 +1067,249 @@ async function captureSnapshot(targetEl, methodName, options) {
   }
 }
 
+function canvasToPngBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    if (typeof canvas.toBlob === 'function') {
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('Could not encode transparent PNG image.'));
+        }
+      }, 'image/png');
+      return;
+    }
+
+    const dataUrl = canvas.toDataURL('image/png');
+    const parts = dataUrl.split(',');
+    const binary = atob(parts[1] || '');
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    resolve(new Blob([bytes], { type: 'image/png' }));
+  });
+}
+
+function normalizeColorSchemeOnElement(el) {
+  if (!el) return;
+  if (el.style && typeof el.style.setProperty === 'function') {
+    el.style.setProperty('color-scheme', 'normal');
+  } else if (typeof el.hasAttribute === 'function' && el.hasAttribute('style')) {
+    const updatedStyle = (el.getAttribute('style') || '').replace(/color-scheme\s*:[^;]+;?/gi, 'color-scheme: normal;');
+    el.setAttribute('style', updatedStyle);
+  }
+}
+
+function sanitizeSvgForTransparentExport(svgXml) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgXml, 'image/svg+xml');
+  const svgEl = doc.documentElement;
+  if (!svgEl || svgEl.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) {
+    return svgXml;
+  }
+
+  svgEl.style.setProperty('background', 'transparent');
+  svgEl.style.setProperty('background-color', 'transparent');
+  svgEl.style.setProperty('background-image', 'none');
+  normalizeColorSchemeOnElement(svgEl);
+
+  for (const styleEl of Array.from(svgEl.querySelectorAll('style'))) {
+    if (styleEl.textContent && /color-scheme\s*:/i.test(styleEl.textContent)) {
+      styleEl.textContent = styleEl.textContent.replace(/color-scheme\s*:[^;{}]+;?/gi, 'color-scheme: normal;');
+    }
+  }
+
+  // Remove any top-level background rect directly under <svg>
+  for (const child of Array.from(svgEl.children)) {
+    const tagName = child.nodeName.toLowerCase();
+    if (tagName === 'rect') {
+      child.remove();
+    } else if (tagName === 'foreignobject') {
+      child.style.setProperty('background', 'transparent');
+      child.style.setProperty('background-color', 'transparent');
+      child.style.setProperty('background-image', 'none');
+      normalizeColorSchemeOnElement(child);
+
+      const frameEl = child.firstElementChild;
+      if (frameEl && frameEl.id === 'snapshotExportFrame') {
+        frameEl.style.setProperty('background', 'transparent');
+        frameEl.style.setProperty('background-color', 'transparent');
+        frameEl.style.setProperty('background-image', 'none');
+        normalizeColorSchemeOnElement(frameEl);
+      }
+
+      for (const descendant of Array.from(child.querySelectorAll('*'))) {
+        normalizeColorSchemeOnElement(descendant);
+      }
+    }
+  }
+
+  return new XMLSerializer().serializeToString(svgEl);
+}
+
+function loadSvgAsImage(svgXml) {
+  return new Promise((resolve, reject) => {
+    const svgBlob = new Blob([svgXml], { type: 'image/svg+xml;charset=utf-8' });
+    const reader = new FileReader();
+
+    reader.onerror = () => {
+      reject(new Error('Could not read snapshot SVG for rasterization.'));
+    };
+
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!dataUrl) {
+        reject(new Error('Could not rasterize snapshot SVG.'));
+        return;
+      }
+
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = () => {
+        img.onload = null;
+        img.onerror = null;
+        resolve(img);
+      };
+      img.onerror = () => {
+        img.onload = null;
+        img.onerror = null;
+        reject(new Error('Could not rasterize snapshot SVG.'));
+      };
+      img.src = dataUrl;
+    };
+
+    reader.readAsDataURL(svgBlob);
+  });
+}
+
+function verifyCanvasTransparency(ctx, targetRect, windowRect, canvasWidth, canvasHeight) {
+  const clampX = (x) => Math.max(0, Math.min(canvasWidth - 1, Math.round(x)));
+  const clampY = (y) => Math.max(0, Math.min(canvasHeight - 1, Math.round(y)));
+  const readPixel = (x, y) => ctx.getImageData(clampX(x), clampY(y), 1, 1).data;
+
+  // 1. Verify all 4 outer corners have alpha === 0
+  const outerCorners = [
+    [0, 0],
+    [canvasWidth - 1, 0],
+    [0, canvasHeight - 1],
+    [canvasWidth - 1, canvasHeight - 1],
+  ];
+  for (const [x, y] of outerCorners) {
+    const px = readPixel(x, y);
+    if (px[3] !== 0) {
+      throw new Error('Transparent PNG verification failed: outer background is not transparent.');
+    }
+  }
+
+  const scaleX = canvasWidth / Math.max(1, targetRect.width);
+  const scaleY = canvasHeight / Math.max(1, targetRect.height);
+  const winLeft = (windowRect.left - targetRect.left) * scaleX;
+  const winTop = (windowRect.top - targetRect.top) * scaleY;
+  const winRight = (windowRect.right - targetRect.left) * scaleX - 1;
+  const winBottom = (windowRect.bottom - targetRect.top) * scaleY - 1;
+
+  // 2. Verify rounded corner outer tips remain transparent (never opaque / never white)
+  const roundedCornerTips = [
+    [winLeft, winTop],
+    [winRight, winTop],
+    [winLeft, winBottom],
+    [winRight, winBottom],
+  ];
+  for (const [x, y] of roundedCornerTips) {
+    const px = readPixel(x, y);
+    const isOpaqueWhite = px[0] >= 250 && px[1] >= 250 && px[2] >= 250 && px[3] === 255;
+    if (px[3] === 255 || isOpaqueWhite) {
+      throw new Error('Transparent PNG verification failed: rounded corners lost transparency.');
+    }
+  }
+
+  // 3. Verify the code window interior is solid opaque (alpha === 255)
+  const interiorX = (winLeft + winRight) / 2;
+  const interiorY = (winTop + winBottom) / 2;
+  const interiorPx = readPixel(interiorX, interiorY);
+  if (interiorPx[3] !== 255) {
+    throw new Error('Transparent PNG verification failed: code window interior is not opaque.');
+  }
+}
+
+async function verifyPngBlobHeader(blob) {
+  const headerBuf = await blob.slice(0, 33).arrayBuffer();
+  const bytes = new Uint8Array(headerBuf);
+  const pngSig = [137, 80, 78, 71, 13, 10, 26, 10];
+  for (let i = 0; i < pngSig.length; i += 1) {
+    if (bytes[i] !== pngSig[i]) {
+      throw new Error('Exported file failed PNG signature verification.');
+    }
+  }
+  // IHDR colorType is at byte offset 25; 6 = RGBA (truecolor with alpha)
+  const colorType = bytes[25];
+  if (colorType !== 6) {
+    throw new Error('Exported PNG does not contain an RGBA alpha channel.');
+  }
+}
+
 async function exportPng() {
   const transparentBg = els.transparentBgInput.checked;
   const target = els.snapshotExportFrame || els.snapshotNode;
+  const rect = target.getBoundingClientRect();
+  const windowRect = els.snapshotNode.getBoundingClientRect();
   const pixelRatio = getMaxPixelRatio(target);
 
-  const dataUrl = await captureSnapshot(target, 'toPng', {
-    pixelRatio,
+  const svgDataUrl = await captureSnapshot(target, 'toSvg', {
     cacheBust: true,
-    backgroundColor: transparentBg ? undefined : '#FFFFFF',
+    skipFonts: true,
+    backgroundColor: undefined,
+    style: transparentBg
+      ? {
+          background: 'transparent',
+          backgroundColor: 'transparent',
+          backgroundImage: 'none',
+          colorScheme: 'normal',
+        }
+      : undefined,
   });
-  triggerDownload(dataUrl, getExportFilename('png'));
+
+  const rawSvgXml = dataUriToSvgString(svgDataUrl);
+  const cleanSvgXml = transparentBg ? sanitizeSvgForTransparentExport(rawSvgXml) : rawSvgXml;
+  const img = await loadSvgAsImage(cleanSvgXml);
+
+  const baseWidth = Math.max(1, img.naturalWidth || Math.ceil(rect.width));
+  const baseHeight = Math.max(1, img.naturalHeight || Math.ceil(rect.height));
+  const maxCanvasDim = 16384;
+  let canvasWidth = Math.round(baseWidth * pixelRatio);
+  let canvasHeight = Math.round(baseHeight * pixelRatio);
+  if (canvasWidth > maxCanvasDim || canvasHeight > maxCanvasDim) {
+    const scaleDown = Math.min(maxCanvasDim / canvasWidth, maxCanvasDim / canvasHeight);
+    canvasWidth = Math.max(1, Math.floor(canvasWidth * scaleDown));
+    canvasHeight = Math.max(1, Math.floor(canvasHeight * scaleDown));
+  }
+
+  const outputCanvas = document.createElement('canvas');
+  outputCanvas.width = canvasWidth;
+  outputCanvas.height = canvasHeight;
+  const ctx = outputCanvas.getContext('2d', { alpha: true });
+
+  if (!ctx) {
+    throw new Error('Could not initialize 2D canvas context for PNG export.');
+  }
+
+  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  if (!transparentBg) {
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  }
+  ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+
+  if (transparentBg) {
+    verifyCanvasTransparency(ctx, rect, windowRect, canvasWidth, canvasHeight);
+  }
+
+  const pngBlob = await canvasToPngBlob(outputCanvas);
+  if (transparentBg) {
+    await verifyPngBlobHeader(pngBlob);
+  }
+  triggerDownload(pngBlob, getExportFilename('png'));
 }
 
 async function exportJpg() {
@@ -1239,10 +1477,33 @@ function getLineLeadingIndent(line) {
 }
 
 function getCurrentLineBounds(text, cursorPos) {
-  const lineStart = text.lastIndexOf('\n', cursorPos - 1) + 1;
+  const lineStart = cursorPos <= 0 ? 0 : text.lastIndexOf('\n', cursorPos - 1) + 1;
   const nextNewline = text.indexOf('\n', cursorPos);
   const lineEnd = nextNewline === -1 ? text.length : nextNewline;
   return { lineStart, lineEnd };
+}
+
+function getNearestNonEmptyLineIndent(text) {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (lines[i].trim() !== '') {
+      return getLineLeadingIndent(lines[i]);
+    }
+  }
+  return '';
+}
+
+function getBraceScannerOptions(lang) {
+  if (lang === 'css') {
+    return { allowLineComments: false, allowRegex: false, allowBackticks: false };
+  }
+  if (lang === 'javascript' || lang === 'typescript') {
+    return { allowLineComments: true, allowRegex: true, allowBackticks: true };
+  }
+  if (lang === 'json') {
+    return { allowLineComments: false, allowRegex: false, allowBackticks: false };
+  }
+  return { allowLineComments: true, allowRegex: false, allowBackticks: false };
 }
 
 function scanHtmlContext(text) {
@@ -1250,10 +1511,11 @@ function scanHtmlContext(text) {
   let i = 0;
   const len = text.length;
   let lineStart = 0;
-  let lineHasTag = false;
+  let lineHasOpeningTag = false;
+  let inComment = false;
 
   function getLineIndentAt(pos) {
-    const ls = text.lastIndexOf('\n', pos - 1) + 1;
+    const ls = pos <= 0 ? 0 : text.lastIndexOf('\n', pos - 1) + 1;
     let end = ls;
     while (end < len && (text[end] === ' ' || text[end] === '\t')) {
       end += 1;
@@ -1265,7 +1527,7 @@ function scanHtmlContext(text) {
     const ch = text[i];
     if (ch === '\n') {
       lineStart = i + 1;
-      lineHasTag = false;
+      lineHasOpeningTag = false;
       i += 1;
       continue;
     }
@@ -1277,7 +1539,10 @@ function scanHtmlContext(text) {
 
     if (text.startsWith('<!--', i)) {
       const closeComment = text.indexOf('-->', i + 4);
-      if (closeComment === -1) break;
+      if (closeComment === -1) {
+        inComment = true;
+        break;
+      }
       i = closeComment + 3;
       continue;
     }
@@ -1298,7 +1563,6 @@ function scanHtmlContext(text) {
       }
       stack.pop();
       i += closeRawMatch[0].length;
-      lineHasTag = true;
       continue;
     }
 
@@ -1346,34 +1610,60 @@ function scanHtmlContext(text) {
       }
     } else if (!isSelfClosing && !HTML_VOID_TAGS.has(tagName)) {
       const rawLineIndent = getLineIndentAt(i);
-      const baseIndent = !lineHasTag
+      const baseIndent = !lineHasOpeningTag
         ? rawLineIndent
         : (stack.length > 0 ? stack[stack.length - 1].indent + INDENT_UNIT : rawLineIndent);
-      stack.push({ tag: tagName, indent: baseIndent, contentStart: j + 1, lineStart });
+      stack.push({
+        tag: tagName,
+        level: stack.length,
+        indent: baseIndent,
+        isSelfClosing: false,
+        contentStart: j + 1,
+        lineStart,
+      });
+      lineHasOpeningTag = true;
     }
 
-    lineHasTag = true;
     i = j + 1;
   }
 
-  return { stack };
+  return { stack, inComment };
 }
 
-function scanBraceContext(text, baseIndent = '') {
+function scanBraceContext(text, baseIndent = '', options = {}) {
+  const {
+    allowLineComments = true,
+    allowRegex = false,
+    allowBackticks = false,
+  } = options;
+
   const stack = [];
   let i = 0;
   const len = text.length;
   let quote = '';
   let inLineComment = false;
   let inBlockComment = false;
+  let inRegex = false;
+  let inRegexClass = false;
   let currentLineIndent = baseIndent;
   let atLineStart = true;
+  let lastNonWsToken = '';
+  const templateBraceDepths = [];
+
+  function canStartRegexAfter(prevToken) {
+    if (!prevToken) return true;
+    return /^(?:[({\[:,;=!?&|^~+\-*%<>]|return|case|throw|typeof|void|delete|in|instanceof|new|await|yield|else)$/.test(prevToken);
+  }
 
   while (i < len) {
     const ch = text[i];
 
     if (ch === '\n') {
       inLineComment = false;
+      if (inRegex) {
+        inRegex = false;
+        inRegexClass = false;
+      }
       atLineStart = true;
       currentLineIndent = '';
       i += 1;
@@ -1404,19 +1694,45 @@ function scanBraceContext(text, baseIndent = '') {
       continue;
     }
 
-    if (quote) {
+    if (inRegex) {
       if (ch === '\\' && i + 1 < len) {
         i += 2;
         continue;
       }
-      if (ch === quote) {
-        quote = '';
+      if (ch === '[') {
+        inRegexClass = true;
+      } else if (ch === ']') {
+        inRegexClass = false;
+      } else if (ch === '/' && !inRegexClass) {
+        inRegex = false;
+        lastNonWsToken = '/';
       }
       i += 1;
       continue;
     }
 
-    if (ch === '/' && text[i + 1] === '/') {
+    if (quote) {
+      if (ch === '\\' && i + 1 < len) {
+        i += 2;
+        continue;
+      }
+      if (quote === '`' && ch === '$' && text[i + 1] === '{') {
+        quote = '';
+        templateBraceDepths.push(stack.length);
+        stack.push({ ch: '{', indent: currentLineIndent, isTemplateExpr: true });
+        lastNonWsToken = '{';
+        i += 2;
+        continue;
+      }
+      if (ch === quote) {
+        quote = '';
+        lastNonWsToken = '"';
+      }
+      i += 1;
+      continue;
+    }
+
+    if (allowLineComments && ch === '/' && text[i + 1] === '/') {
       inLineComment = true;
       i += 2;
       continue;
@@ -1428,7 +1744,14 @@ function scanBraceContext(text, baseIndent = '') {
       continue;
     }
 
-    if (ch === '"' || ch === "'" || ch === '`') {
+    if (allowRegex && ch === '/' && canStartRegexAfter(lastNonWsToken)) {
+      inRegex = true;
+      inRegexClass = false;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || (allowBackticks && ch === '`')) {
       quote = ch;
       i += 1;
       continue;
@@ -1436,90 +1759,319 @@ function scanBraceContext(text, baseIndent = '') {
 
     if (ch === '{' || ch === '[' || ch === '(') {
       stack.push({ ch, indent: currentLineIndent });
-    } else if (ch === '}' || ch === ']' || ch === ')') {
+      lastNonWsToken = ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '}' || ch === ']' || ch === ')') {
       const target = ch === '}' ? '{' : ch === ']' ? '[' : '(';
       for (let k = stack.length - 1; k >= 0; k -= 1) {
         if (stack[k].ch === target) {
+          const popped = stack[k];
           stack.length = k;
+          if (ch === '}' && popped.isTemplateExpr && templateBraceDepths.length > 0) {
+            templateBraceDepths.pop();
+            quote = '`';
+          }
           break;
         }
       }
+      lastNonWsToken = ch;
+      i += 1;
+      continue;
+    }
+
+    if (/[A-Za-z0-9_$]/.test(ch)) {
+      let j = i + 1;
+      while (j < len && /[A-Za-z0-9_$]/.test(text[j])) {
+        j += 1;
+      }
+      lastNonWsToken = text.slice(i, j);
+      i = j;
+      continue;
+    }
+
+    if (!/\s/.test(ch)) {
+      lastNonWsToken = ch;
     }
 
     i += 1;
   }
 
-  return { stack };
+  return {
+    stack,
+    inBlockComment,
+    inLineComment,
+    inString: Boolean(quote),
+  };
 }
 
 function getCurrentHtmlBlockIndent(textBefore) {
   const htmlCtx = scanHtmlContext(textBefore);
-  const { stack } = htmlCtx;
+  const { stack, inComment } = htmlCtx;
+  if (inComment) {
+    return { indent: getNearestNonEmptyLineIndent(textBefore), inRawTag: false, inComment: true, stack };
+  }
   if (stack.length === 0) {
-    return { indent: '', inRawTag: false, stack };
+    return { indent: '', inRawTag: false, inComment: false, stack };
   }
 
   const top = stack[stack.length - 1];
   if (top.tag === 'script' || top.tag === 'style') {
     const innerText = textBefore.slice(top.contentStart);
     const braceBase = top.indent + INDENT_UNIT;
-    const braceCtx = scanBraceContext(innerText, braceBase);
+    const rawLang = top.tag === 'style' ? 'css' : 'javascript';
+    const braceCtx = scanBraceContext(innerText, braceBase, getBraceScannerOptions(rawLang));
     if (braceCtx.stack.length > 0) {
       const topBrace = braceCtx.stack[braceCtx.stack.length - 1];
-      return { indent: topBrace.indent + INDENT_UNIT, inRawTag: true, braceBase, braceCtx, stack };
+      return { indent: topBrace.indent + INDENT_UNIT, inRawTag: true, inComment: false, braceBase, braceCtx, stack };
     }
-    return { indent: braceBase, inRawTag: true, braceBase, braceCtx, stack };
+    return { indent: braceBase, inRawTag: true, inComment: false, braceBase, braceCtx, stack };
   }
 
-  return { indent: top.indent + INDENT_UNIT, inRawTag: false, stack };
+  return { indent: top.indent + INDENT_UNIT, inRawTag: false, inComment: false, stack };
+}
+
+function getStructuralIndentAtPosition(beforeLineText, lang) {
+  if (!beforeLineText) return '';
+
+  if (lang === 'html') {
+    return getCurrentHtmlBlockIndent(beforeLineText).indent;
+  }
+
+  if (BRACE_LANGUAGES.has(lang)) {
+    const braceCtx = scanBraceContext(beforeLineText, '', getBraceScannerOptions(lang));
+    if (braceCtx.stack.length > 0) {
+      return braceCtx.stack[braceCtx.stack.length - 1].indent + INDENT_UNIT;
+    }
+    const htmlCtx = scanHtmlContext(beforeLineText);
+    if (htmlCtx.stack.length > 0) {
+      return htmlCtx.stack[htmlCtx.stack.length - 1].indent + INDENT_UNIT;
+    }
+    return '';
+  }
+
+  if (COLON_LANGUAGES.has(lang)) {
+    const lines = beforeLineText.split('\n');
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const line = lines[i];
+      if (line.trim() === '') continue;
+      const base = getLineLeadingIndent(line);
+      const stripped = line.replace(/\s+#.*$/, '').trimEnd();
+      return stripped.endsWith(':') ? base + INDENT_UNIT : base;
+    }
+    return '';
+  }
+
+  const fallbackHtml = scanHtmlContext(beforeLineText);
+  if (fallbackHtml.stack.length > 0) {
+    return fallbackHtml.stack[fallbackHtml.stack.length - 1].indent + INDENT_UNIT;
+  }
+
+  const fallbackBrace = scanBraceContext(beforeLineText, '', getBraceScannerOptions(lang));
+  if (fallbackBrace.stack.length > 0) {
+    return fallbackBrace.stack[fallbackBrace.stack.length - 1].indent + INDENT_UNIT;
+  }
+
+  return '';
+}
+
+function countTagOccurrences(text, targetTag) {
+  let opens = 0;
+  let closes = 0;
+  let i = 0;
+  const len = text.length;
+  let inRawTag = '';
+
+  while (i < len) {
+    if (text[i] !== '<') {
+      i += 1;
+      continue;
+    }
+    if (text.startsWith('<!--', i)) {
+      const endCmt = text.indexOf('-->', i + 4);
+      if (endCmt === -1) break;
+      i = endCmt + 3;
+      continue;
+    }
+    if (text[i + 1] === '!' || text[i + 1] === '?') {
+      const endDecl = text.indexOf('>', i + 2);
+      if (endDecl === -1) break;
+      i = endDecl + 1;
+      continue;
+    }
+    if (inRawTag) {
+      const closeRaw = text.slice(i).match(new RegExp(`^<\\/${inRawTag}\\s*>`, 'i'));
+      if (!closeRaw) {
+        i += 1;
+        continue;
+      }
+      inRawTag = '';
+      i += closeRaw[0].length;
+      continue;
+    }
+    const tagMatch = text.slice(i).match(/^<(\/?)([A-Za-z][A-Za-z0-9:-]*)(?=[\s/>]|$)/);
+    if (!tagMatch) {
+      i += 1;
+      continue;
+    }
+    const isClosing = tagMatch[1] === '/';
+    const name = tagMatch[2].toLowerCase();
+    let j = i + tagMatch[0].length;
+    let quote = '';
+    let foundGt = false;
+    while (j < len) {
+      const c = text[j];
+      if (quote) {
+        if (c === '\\' && j + 1 < len) {
+          j += 2;
+          continue;
+        }
+        if (c === quote) quote = '';
+      } else if (c === '"' || c === "'") {
+        quote = c;
+      } else if (c === '>') {
+        foundGt = true;
+        break;
+      }
+      j += 1;
+    }
+    if (!foundGt) break;
+    const isSelfClosing = !isClosing && text[j - 1] === '/';
+    if (!isClosing && !isSelfClosing && (name === 'script' || name === 'style')) {
+      inRawTag = name;
+    }
+    if (name === targetTag) {
+      if (isClosing) closes += 1;
+      else if (!isSelfClosing && !HTML_VOID_TAGS.has(name)) opens += 1;
+    }
+    i = j + 1;
+  }
+
+  return { opens, closes };
+}
+
+function shouldAutoCloseHtmlTagOnEnter(beforeCursor, afterCursor, openTagRawName, stackTopIndent) {
+  const tagName = openTagRawName.toLowerCase();
+  if (HTML_VOID_TAGS.has(tagName) || tagName === 'script' || tagName === 'style') {
+    return null;
+  }
+
+  // Only auto-insert </tag> when nothing non-closing follows and tagName has more opens than closes.
+  let i = 0;
+  const len = afterCursor.length;
+  while (i < len) {
+    const ch = afterCursor[i];
+    if (/\s/.test(ch)) {
+      i += 1;
+      continue;
+    }
+    if (!afterCursor.startsWith('</', i)) {
+      return null;
+    }
+    const closeMatch = afterCursor.slice(i).match(/^<\/([A-Za-z][A-Za-z0-9:-]*)\s*>/);
+    if (!closeMatch) {
+      return null;
+    }
+    i += closeMatch[0].length;
+  }
+
+  const counts = countTagOccurrences(beforeCursor + afterCursor, tagName);
+  if (counts.opens <= counts.closes) {
+    return null;
+  }
+
+  return {
+    innerIndent: stackTopIndent + INDENT_UNIT,
+    closingIndent: stackTopIndent,
+    closeTagName: openTagRawName,
+  };
 }
 
 function computeNextLineIndent(beforeCursor, afterCursor, lang) {
   const lastNewline = beforeCursor.lastIndexOf('\n');
   const currentLine = beforeCursor.slice(lastNewline + 1);
   const currentIndent = getLineLeadingIndent(currentLine);
+  const isCurrentLineBlank = currentLine.trim() === '';
 
   const afterLineEnd = afterCursor.indexOf('\n');
   const afterOnSameLine = afterLineEnd === -1 ? afterCursor : afterCursor.slice(0, afterLineEnd);
 
-  const betweenHtmlTagsMatch = beforeCursor.match(/<([A-Za-z][A-Za-z0-9:-]*)(?:\s[^>]*)?>\s*$/)
-    && afterOnSameLine.match(/^\s*<\/([A-Za-z][A-Za-z0-9:-]*)\s*>/);
-  if (betweenHtmlTagsMatch) {
-    const openMatch = beforeCursor.match(/<([A-Za-z][A-Za-z0-9:-]*)(?:\s[^>]*)?>\s*$/);
+  if (!isCurrentLineBlank) {
+    const openMatch = currentLine.match(/<([A-Za-z][A-Za-z0-9:-]*)(?:\s+(?:"[^"]*"|'[^']*'|[^>"'/])*)?>\s*$/);
     const closeMatch = afterOnSameLine.match(/^\s*<\/([A-Za-z][A-Za-z0-9:-]*)\s*>/);
-    const openName = openMatch[1].toLowerCase();
-    const closeName = closeMatch[1].toLowerCase();
-    if (openName === closeName && !HTML_VOID_TAGS.has(openName)) {
-      return {
-        innerIndent: currentIndent + INDENT_UNIT,
-        closingIndent: currentIndent,
-        splitPair: true,
-      };
+    if (openMatch && closeMatch && !openMatch[0].trimEnd().endsWith('/>')) {
+      const openName = openMatch[1].toLowerCase();
+      const closeName = closeMatch[1].toLowerCase();
+      if (openName === closeName && !HTML_VOID_TAGS.has(openName)) {
+        const htmlCtx = scanHtmlContext(beforeCursor);
+        const topIndent = htmlCtx.stack.length > 0
+          ? htmlCtx.stack[htmlCtx.stack.length - 1].indent
+          : currentIndent;
+        return {
+          innerIndent: topIndent + INDENT_UNIT,
+          closingIndent: topIndent,
+          splitPair: true,
+        };
+      }
     }
-  }
 
-  const openBraceTrimmed = beforeCursor.trimEnd();
-  const lastChar = openBraceTrimmed.slice(-1);
-  const nextTrimmed = afterOnSameLine.trimStart();
-  const nextChar = nextTrimmed[0];
-  if (
-    (lastChar === '{' && nextChar === '}') ||
-    (lastChar === '[' && nextChar === ']') ||
-    (lastChar === '(' && nextChar === ')')
-  ) {
-    return {
-      innerIndent: currentIndent + INDENT_UNIT,
-      closingIndent: currentIndent,
-      splitPair: true,
-    };
+    const openBraceTrimmed = currentLine.trimEnd();
+    const lastChar = openBraceTrimmed.slice(-1);
+    const nextTrimmed = afterOnSameLine.trimStart();
+    const nextChar = nextTrimmed[0];
+    if (
+      (lastChar === '{' && nextChar === '}') ||
+      (lastChar === '[' && nextChar === ']') ||
+      (lastChar === '(' && nextChar === ')')
+    ) {
+      const braceCtx = scanBraceContext(beforeCursor, '', getBraceScannerOptions(lang));
+      if (!braceCtx.inBlockComment && !braceCtx.inLineComment && !braceCtx.inString) {
+        const topIndent = braceCtx.stack.length > 0
+          ? braceCtx.stack[braceCtx.stack.length - 1].indent
+          : currentIndent;
+        return {
+          innerIndent: topIndent + INDENT_UNIT,
+          closingIndent: topIndent,
+          splitPair: true,
+        };
+      }
+    }
   }
 
   if (lang === 'html') {
     const htmlInfo = getCurrentHtmlBlockIndent(beforeCursor);
-    return { innerIndent: htmlInfo.indent || currentIndent, splitPair: false };
+    if (!isCurrentLineBlank && !htmlInfo.inComment && !htmlInfo.inRawTag && afterOnSameLine.trim() === '') {
+      const justOpenedMatch = currentLine.match(/<([A-Za-z][A-Za-z0-9:-]*)(?:\s+(?:"[^"]*"|'[^']*'|[^>"'/])*)?>\s*$/);
+      if (justOpenedMatch && !justOpenedMatch[0].trimEnd().endsWith('/>')) {
+        const top = htmlInfo.stack[htmlInfo.stack.length - 1];
+        if (top && top.tag === justOpenedMatch[1].toLowerCase()) {
+          const autoClosePlan = shouldAutoCloseHtmlTagOnEnter(
+            beforeCursor,
+            afterCursor,
+            justOpenedMatch[1],
+            top.indent
+          );
+          if (autoClosePlan) {
+            return autoClosePlan;
+          }
+        }
+      }
+    }
+    return {
+      innerIndent: htmlInfo.indent || (isCurrentLineBlank ? '' : currentIndent),
+      splitPair: false,
+    };
   }
 
   if (COLON_LANGUAGES.has(lang)) {
+    if (isCurrentLineBlank) {
+      return {
+        innerIndent: getStructuralIndentAtPosition(beforeCursor, lang),
+        splitPair: false,
+      };
+    }
     const stripped = currentLine.replace(/\s+#.*$/, '').trimEnd();
     if (stripped.endsWith(':')) {
       return { innerIndent: currentIndent + INDENT_UNIT, splitPair: false };
@@ -1528,7 +2080,7 @@ function computeNextLineIndent(beforeCursor, afterCursor, lang) {
   }
 
   if (BRACE_LANGUAGES.has(lang)) {
-    const braceCtx = scanBraceContext(beforeCursor);
+    const braceCtx = scanBraceContext(beforeCursor, '', getBraceScannerOptions(lang));
     if (braceCtx.stack.length > 0) {
       const top = braceCtx.stack[braceCtx.stack.length - 1];
       return { innerIndent: top.indent + INDENT_UNIT, splitPair: false };
@@ -1540,26 +2092,25 @@ function computeNextLineIndent(beforeCursor, afterCursor, lang) {
       return { innerIndent: topHtml.indent + INDENT_UNIT, splitPair: false };
     }
 
-    if (currentLine.trimEnd().endsWith('=>')) {
+    if (!isCurrentLineBlank && currentLine.trimEnd().endsWith('=>')) {
       return { innerIndent: currentIndent + INDENT_UNIT, splitPair: false };
     }
 
-    return { innerIndent: currentIndent, splitPair: false };
+    return {
+      innerIndent: isCurrentLineBlank ? '' : currentIndent,
+      splitPair: false,
+    };
   }
 
-  const fallbackHtml = scanHtmlContext(beforeCursor);
-  if (fallbackHtml.stack.length > 0) {
-    const topHtml = fallbackHtml.stack[fallbackHtml.stack.length - 1];
-    return { innerIndent: topHtml.indent + INDENT_UNIT, splitPair: false };
+  const fallbackIndent = getStructuralIndentAtPosition(beforeCursor, lang);
+  if (fallbackIndent) {
+    return { innerIndent: fallbackIndent, splitPair: false };
   }
 
-  const fallbackBrace = scanBraceContext(beforeCursor);
-  if (fallbackBrace.stack.length > 0) {
-    const topBrace = fallbackBrace.stack[fallbackBrace.stack.length - 1];
-    return { innerIndent: topBrace.indent + INDENT_UNIT, splitPair: false };
-  }
-
-  return { innerIndent: currentIndent, splitPair: false };
+  return {
+    innerIndent: isCurrentLineBlank ? getNearestNonEmptyLineIndent(beforeCursor) : currentIndent,
+    splitPair: false,
+  };
 }
 
 function getAlignedHtmlCloseIndent(beforeLineText, closingTagName) {
@@ -1589,7 +2140,12 @@ function getAlignedBraceCloseIndent(beforeLineText, closeChar, lang) {
       const top = stack[stack.length - 1];
       if (top.tag === 'script' || top.tag === 'style') {
         const innerText = beforeLineText.slice(top.contentStart);
-        const braceCtx = scanBraceContext(innerText, top.indent + INDENT_UNIT);
+        const rawLang = top.tag === 'style' ? 'css' : 'javascript';
+        const braceCtx = scanBraceContext(
+          innerText,
+          top.indent + INDENT_UNIT,
+          getBraceScannerOptions(rawLang)
+        );
         for (let k = braceCtx.stack.length - 1; k >= 0; k -= 1) {
           if (braceCtx.stack[k].ch === targetOpen) {
             return braceCtx.stack[k].indent;
@@ -1600,13 +2156,288 @@ function getAlignedBraceCloseIndent(beforeLineText, closeChar, lang) {
     return null;
   }
 
-  const braceCtx = scanBraceContext(beforeLineText);
+  const braceCtx = scanBraceContext(beforeLineText, '', getBraceScannerOptions(lang));
   for (let k = braceCtx.stack.length - 1; k >= 0; k -= 1) {
     if (braceCtx.stack[k].ch === targetOpen) {
       return braceCtx.stack[k].indent;
     }
   }
   return null;
+}
+
+function reindentHtmlLines(lines, baseIndent) {
+  const stack = [];
+  let inComment = false;
+  let inRawTag = '';
+  const result = [];
+
+  function popMatching(tagName) {
+    for (let k = stack.length - 1; k >= 0; k -= 1) {
+      if (stack[k].tag === tagName) {
+        const matched = stack[k];
+        stack.length = k;
+        return matched;
+      }
+    }
+    return null;
+  }
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) {
+      result.push('');
+      continue;
+    }
+
+    if (inComment) {
+      const commentIndent = baseIndent + INDENT_UNIT.repeat(stack.length);
+      result.push(`${commentIndent}${trimmed}`);
+      if (trimmed.includes('-->')) {
+        inComment = false;
+      }
+      continue;
+    }
+
+    if (inRawTag) {
+      const closeRawRe = new RegExp(`^<\\/${inRawTag}\\s*>`, 'i');
+      if (closeRawRe.test(trimmed)) {
+        const matched = popMatching(inRawTag);
+        inRawTag = '';
+        const closeIndent = matched ? matched.indent : `${baseIndent}${INDENT_UNIT.repeat(stack.length)}`;
+        result.push(`${closeIndent}${trimmed}`);
+        continue;
+      }
+      result.push(`${baseIndent}${INDENT_UNIT.repeat(stack.length)}${trimmed}`);
+      continue;
+    }
+
+    let leadingCloseConsumed = false;
+    let matchedCloseEntry = null;
+    const leadingCloseMatch = trimmed.match(/^<\/([A-Za-z][A-Za-z0-9:-]*)\s*>/);
+    if (leadingCloseMatch) {
+      matchedCloseEntry = popMatching(leadingCloseMatch[1].toLowerCase());
+      leadingCloseConsumed = true;
+    }
+
+    const lineIndent = matchedCloseEntry
+      ? matchedCloseEntry.indent
+      : `${baseIndent}${INDENT_UNIT.repeat(stack.length)}`;
+    result.push(`${lineIndent}${trimmed}`);
+
+    let i = leadingCloseConsumed ? leadingCloseMatch[0].length : 0;
+    const len = trimmed.length;
+    let lineHasOpening = false;
+    while (i < len) {
+      if (trimmed[i] !== '<') {
+        i += 1;
+        continue;
+      }
+      if (trimmed.startsWith('<!--', i)) {
+        const endCmt = trimmed.indexOf('-->', i + 4);
+        if (endCmt === -1) {
+          inComment = true;
+          break;
+        }
+        i = endCmt + 3;
+        continue;
+      }
+      if (trimmed[i + 1] === '!' || trimmed[i + 1] === '?') {
+        const endDecl = trimmed.indexOf('>', i + 2);
+        if (endDecl === -1) break;
+        i = endDecl + 1;
+        continue;
+      }
+      const tagMatch = trimmed.slice(i).match(/^<(\/?)([A-Za-z][A-Za-z0-9:-]*)(?=[\s/>]|$)/);
+      if (!tagMatch) {
+        i += 1;
+        continue;
+      }
+      const isClosing = tagMatch[1] === '/';
+      const tagName = tagMatch[2].toLowerCase();
+      let j = i + tagMatch[0].length;
+      let quote = '';
+      let foundGt = false;
+      while (j < len) {
+        const c = trimmed[j];
+        if (quote) {
+          if (c === '\\' && j + 1 < len) {
+            j += 2;
+            continue;
+          }
+          if (c === quote) quote = '';
+        } else if (c === '"' || c === "'") {
+          quote = c;
+        } else if (c === '>') {
+          foundGt = true;
+          break;
+        }
+        j += 1;
+      }
+      if (!foundGt) break;
+      const isSelfClosing = !isClosing && trimmed[j - 1] === '/';
+      if (isClosing) {
+        popMatching(tagName);
+        if (inRawTag === tagName) inRawTag = '';
+      } else if (!isSelfClosing && !HTML_VOID_TAGS.has(tagName)) {
+        const openIndent = !lineHasOpening
+          ? lineIndent
+          : (stack.length > 0 ? stack[stack.length - 1].indent + INDENT_UNIT : lineIndent);
+        stack.push({
+          tag: tagName,
+          level: stack.length,
+          indent: openIndent,
+          isSelfClosing: false,
+        });
+        lineHasOpening = true;
+        if (tagName === 'script' || tagName === 'style') {
+          inRawTag = tagName;
+        }
+      }
+      i = j + 1;
+    }
+  }
+
+  return result;
+}
+
+function reindentBraceLines(lines, baseIndent, lang) {
+  const options = getBraceScannerOptions(lang);
+  let depth = 0;
+  let inBlockComment = false;
+  const result = [];
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) {
+      result.push('');
+      continue;
+    }
+
+    let leadingClosers = 0;
+    if (!inBlockComment) {
+      while (leadingClosers < trimmed.length && /[}\])]/.test(trimmed[leadingClosers])) {
+        leadingClosers += 1;
+      }
+    }
+
+    const effectiveDepth = Math.max(0, depth - leadingClosers);
+    const lineIndent = `${baseIndent}${INDENT_UNIT.repeat(effectiveDepth)}`;
+    result.push(`${lineIndent}${trimmed}`);
+
+    const lineCtx = scanBraceContext(
+      `${inBlockComment ? '/* ' : ''}${trimmed}`,
+      '',
+      options
+    );
+    inBlockComment = lineCtx.inBlockComment;
+
+    let openCount = 0;
+    let closeCount = 0;
+    let i = 0;
+    let quote = '';
+    let blockCmt = false;
+    while (i < trimmed.length) {
+      const ch = trimmed[i];
+      if (blockCmt) {
+        if (ch === '*' && trimmed[i + 1] === '/') {
+          blockCmt = false;
+          i += 2;
+          continue;
+        }
+        i += 1;
+        continue;
+      }
+      if (quote) {
+        if (ch === '\\' && i + 1 < trimmed.length) {
+          i += 2;
+          continue;
+        }
+        if (ch === quote) quote = '';
+        i += 1;
+        continue;
+      }
+      if (options.allowLineComments && ch === '/' && trimmed[i + 1] === '/') break;
+      if (ch === '/' && trimmed[i + 1] === '*') {
+        blockCmt = true;
+        i += 2;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || (options.allowBackticks && ch === '`')) {
+        quote = ch;
+        i += 1;
+        continue;
+      }
+      if (ch === '{' || ch === '[' || ch === '(') openCount += 1;
+      else if (ch === '}' || ch === ']' || ch === ')') closeCount += 1;
+      i += 1;
+    }
+    depth = Math.max(0, depth + openCount - closeCount);
+  }
+
+  return result;
+}
+
+function formatPastedCode(rawPaste, value, start, end, lang) {
+  const normalized = rawPaste.replace(/\r\n?/g, '\n');
+  const lines = normalized.split('\n').map((line) => {
+    if (line.trim() === '') return '';
+    return line.replace(/^[ \t]+/, (ws) => ws.replace(/\t/g, INDENT_UNIT));
+  });
+
+  const { lineStart } = getCurrentLineBounds(value, start);
+  const lineBeforeCursor = value.slice(lineStart, start);
+  const isLineBeforeBlank = /^[ \t]*$/.test(lineBeforeCursor);
+  const beforeLineText = lineStart > 0 ? value.slice(0, lineStart - 1) : '';
+
+  let baseIndent;
+  let replaceStart;
+  if (isLineBeforeBlank) {
+    baseIndent = lineBeforeCursor.length > 0
+      ? lineBeforeCursor
+      : getStructuralIndentAtPosition(beforeLineText, lang);
+    replaceStart = lineStart;
+  } else {
+    baseIndent = getLineLeadingIndent(lineBeforeCursor);
+    replaceStart = start;
+  }
+
+  const startCheckIdx = isLineBeforeBlank ? 0 : 1;
+  let minIndentLen = Infinity;
+  for (let i = startCheckIdx; i < lines.length; i += 1) {
+    if (lines[i] === '') continue;
+    const indentLen = getLineLeadingIndent(lines[i]).length;
+    if (indentLen < minIndentLen) minIndentLen = indentLen;
+  }
+  if (!Number.isFinite(minIndentLen)) minIndentLen = 0;
+
+  const strippedLines = lines.map((line, idx) => {
+    if (line === '') return '';
+    if (idx < startCheckIdx) return line;
+    return line.slice(minIndentLen);
+  });
+
+  const nonEmptyCheckLines = strippedLines.slice(startCheckIdx).filter((l) => l !== '');
+  const allFlatAtColZero = nonEmptyCheckLines.length >= 2
+    && nonEmptyCheckLines.every((l) => getLineLeadingIndent(l).length === 0);
+
+  let formattedLines;
+  if (allFlatAtColZero && lang === 'html' && /<[A-Za-z][A-Za-z0-9:-]*[\s/>]/.test(normalized)) {
+    formattedLines = reindentHtmlLines(strippedLines, baseIndent);
+  } else if (allFlatAtColZero && BRACE_LANGUAGES.has(lang) && /\{[\s\S]*\}/.test(normalized)) {
+    formattedLines = reindentBraceLines(strippedLines, baseIndent, lang);
+  } else {
+    formattedLines = strippedLines.map((line, idx) => {
+      if (line === '') return '';
+      if (idx < startCheckIdx) return line;
+      return `${baseIndent}${line}`;
+    });
+  }
+
+  return {
+    text: formattedLines.join('\n'),
+    replaceStart,
+    replaceEnd: end,
+  };
 }
 
 function setupSmartEditor(textarea) {
@@ -1621,6 +2452,27 @@ function setupSmartEditor(textarea) {
 
   function insertSmartEnter(start, end) {
     const value = textarea.value;
+    const { lineStart, lineEnd } = getCurrentLineBounds(value, start);
+    const currentLineText = value.slice(lineStart, lineEnd);
+
+    // Blank-line discipline: strip any whitespace on an abandoned blank line
+    // and compute the next line's indentation purely from surrounding syntax structure.
+    if (start === end && /^[ \t]*$/.test(currentLineText)) {
+      const beforeBlankLine = lineStart > 0 ? value.slice(0, lineStart - 1) : '';
+      const afterBlankLine = value.slice(lineEnd);
+      const lang = getResolvedLanguage().lang;
+      const structuralIndent = getStructuralIndentAtPosition(beforeBlankLine, lang);
+      const prevLineBefore = lineStart > 0 ? `${beforeBlankLine}\n` : '';
+      const plan = beforeBlankLine
+        ? computeNextLineIndent(prevLineBefore, afterBlankLine, lang)
+        : { innerIndent: '', splitPair: false };
+      const nextIndent = plan.innerIndent || structuralIndent;
+      textarea.setRangeText(`\n${nextIndent}`, lineStart, lineEnd, 'end');
+      syncSnapshotState();
+      updateSnapshotContent();
+      return;
+    }
+
     const before = value.slice(0, start);
     const after = value.slice(end);
     const lang = getResolvedLanguage().lang;
@@ -1631,6 +2483,11 @@ function setupSmartEditor(textarea) {
       textarea.setRangeText(insertText, start, end, 'end');
       const caretPos = start + 1 + plan.innerIndent.length;
       textarea.setSelectionRange(caretPos, caretPos);
+    } else if (plan.closeTagName) {
+      const insertText = `\n${plan.innerIndent}\n${plan.closingIndent}</${plan.closeTagName}>`;
+      textarea.setRangeText(insertText, start, end, 'end');
+      const caretPos = start + 1 + plan.innerIndent.length;
+      textarea.setSelectionRange(caretPos, caretPos);
     } else {
       const insertText = `\n${plan.innerIndent}`;
       textarea.setRangeText(insertText, start, end, 'end');
@@ -1638,6 +2495,34 @@ function setupSmartEditor(textarea) {
 
     syncSnapshotState();
     updateSnapshotContent();
+  }
+
+  function handleSmartBackspace() {
+    const value = textarea.value;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    if (start !== end || start === 0) return false;
+
+    const { lineStart, lineEnd } = getCurrentLineBounds(value, start);
+    const lineBeforeCursor = value.slice(lineStart, start);
+    const lineAfterCursor = value.slice(start, lineEnd);
+
+    if (/^[ \t]+$/.test(lineBeforeCursor) && lineAfterCursor === '') {
+      let removeCount;
+      if (lineBeforeCursor.endsWith('\t')) {
+        removeCount = 1;
+      } else {
+        const trailingSpaces = lineBeforeCursor.match(/ +$/)[0].length;
+        removeCount = trailingSpaces % INDENT_UNIT.length || INDENT_UNIT.length;
+        removeCount = Math.min(removeCount, lineBeforeCursor.length);
+      }
+      textarea.setRangeText('', start - removeCount, start, 'end');
+      syncSnapshotState();
+      updateSnapshotContent();
+      return true;
+    }
+
+    return false;
   }
 
   function handleIndentLines(isOutdent) {
@@ -1652,7 +2537,7 @@ function setupSmartEditor(textarea) {
       return;
     }
 
-    const blockStart = value.lastIndexOf('\n', start - 1) + 1;
+    const blockStart = start <= 0 ? 0 : value.lastIndexOf('\n', start - 1) + 1;
     const endNewlineSearchPos = end > start && value[end - 1] === '\n' ? end - 1 : end;
     const nextNewline = value.indexOf('\n', endNewlineSearchPos);
     const blockEnd = nextNewline === -1 ? value.length : nextNewline;
@@ -1708,7 +2593,7 @@ function setupSmartEditor(textarea) {
     return true;
   }
 
-  function alignClosingConstructAfterInput() {
+  function alignClosingOrBlankLineAfterInput(allowBlankLineIndent = true) {
     const value = textarea.value;
     const cursor = textarea.selectionStart;
     if (cursor !== textarea.selectionEnd || cursor === 0) return;
@@ -1723,18 +2608,16 @@ function setupSmartEditor(textarea) {
     const beforeLineText = lineStart > 0 ? value.slice(0, lineStart - 1) : '';
     const lang = getResolvedLanguage().lang;
 
-    if (typedChar === '/' && /^[ \t]*<\/$/.test(lineBeforeCursor)) {
+    if (/^[ \t]*<\/$/.test(lineBeforeCursor)) {
       const targetIndent = getAlignedHtmlCloseIndent(beforeLineText, '');
       alignCurrentLineIndent(targetIndent);
       return;
     }
 
-    if (typedChar === '>') {
-      const closeTagMatch = lineBeforeCursor.match(/^[ \t]*<\/([A-Za-z][A-Za-z0-9:-]*)\s*>$/);
-      if (closeTagMatch) {
-        const targetIndent = getAlignedHtmlCloseIndent(beforeLineText, closeTagMatch[1]);
-        alignCurrentLineIndent(targetIndent);
-      }
+    const partialOrFullCloseMatch = lineBeforeCursor.match(/^[ \t]*<\/([A-Za-z][A-Za-z0-9:-]*)\s*>?$/);
+    if (partialOrFullCloseMatch) {
+      const targetIndent = getAlignedHtmlCloseIndent(beforeLineText, partialOrFullCloseMatch[1]);
+      alignCurrentLineIndent(targetIndent);
       return;
     }
 
@@ -1743,13 +2626,56 @@ function setupSmartEditor(textarea) {
       if (closeBracePattern.test(lineBeforeCursor)) {
         const targetIndent = getAlignedBraceCloseIndent(beforeLineText, typedChar, lang);
         alignCurrentLineIndent(targetIndent);
+        return;
       }
     }
+
+    // When a genuinely empty line is converted into a code line by typing the first non-whitespace character,
+    // apply the structural indentation for its nesting level.
+    if (
+      allowBlankLineIndent &&
+      lineBeforeCursor.length === 1 &&
+      !/[ \t\n]/.test(typedChar) &&
+      lineStart > 0 &&
+      prevValue.length + 1 === value.length
+    ) {
+      const structuralIndent = getStructuralIndentAtPosition(beforeLineText, lang);
+      if (structuralIndent) {
+        alignCurrentLineIndent(structuralIndent);
+      }
+    }
+  }
+
+  function clearKeydownGuardSoon() {
+    Promise.resolve().then(() => {
+      handledByKeydown = false;
+    });
+    setTimeout(() => {
+      handledByKeydown = false;
+    }, 0);
   }
 
   textarea.addEventListener('focus', syncSnapshotState);
   textarea.addEventListener('beforeinput', () => {
     prevValue = textarea.value;
+  });
+
+  textarea.addEventListener('paste', (event) => {
+    const pastedText = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
+    if (!pastedText || !/\r|\n/.test(pastedText)) return;
+
+    event.preventDefault();
+    const lang = getResolvedLanguage().lang;
+    const plan = formatPastedCode(
+      pastedText,
+      textarea.value,
+      textarea.selectionStart,
+      textarea.selectionEnd,
+      lang
+    );
+    textarea.setRangeText(plan.text, plan.replaceStart, plan.replaceEnd, 'end');
+    syncSnapshotState();
+    updateSnapshotContent();
   });
 
   textarea.addEventListener('keydown', (event) => {
@@ -1759,15 +2685,32 @@ function setupSmartEditor(textarea) {
     if (event.key === 'Tab') {
       event.preventDefault();
       handledByKeydown = true;
+      clearKeydownGuardSoon();
       handleIndentLines(event.shiftKey);
+      return;
+    }
+
+    if (event.key === 'Backspace' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (handleSmartBackspace()) {
+        event.preventDefault();
+        handledByKeydown = true;
+        clearKeydownGuardSoon();
+      }
       return;
     }
 
     if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       handledByKeydown = true;
+      clearKeydownGuardSoon();
       insertSmartEnter(textarea.selectionStart, textarea.selectionEnd);
     }
+  });
+
+  textarea.addEventListener('compositionend', () => {
+    alignClosingOrBlankLineAfterInput(false);
+    syncSnapshotState();
+    updateSnapshotContent();
   });
 
   textarea.addEventListener('input', (event) => {
@@ -1777,12 +2720,17 @@ function setupSmartEditor(textarea) {
       return;
     }
 
+    if (event.isComposing) {
+      updateSnapshotContent();
+      return;
+    }
+
     const value = textarea.value;
     const cursor = textarea.selectionStart;
     const inputType = event.inputType || '';
 
-    const isPasteOrHistory = inputType === 'historyUndo' || inputType === 'historyRedo' || inputType === 'insertFromPaste';
-    if (!isPasteOrHistory && cursor === textarea.selectionEnd && cursor > 0) {
+    const isHistory = inputType === 'historyUndo' || inputType === 'historyRedo';
+    if (!isHistory && cursor === textarea.selectionEnd && cursor > 0) {
       const addedOneChar = value.length === prevValue.length + 1;
       if ((inputType === 'insertLineBreak' || addedOneChar) && value[cursor - 1] === '\n') {
         const rawNewlineStart = cursor - 1;
@@ -1791,8 +2739,14 @@ function setupSmartEditor(textarea) {
         return;
       }
 
-      if (addedOneChar || inputType === 'insertText') {
-        alignClosingConstructAfterInput();
+      if (
+        addedOneChar ||
+        inputType === 'insertText' ||
+        inputType === 'insertCompositionText' ||
+        inputType === 'insertFromPaste' ||
+        inputType === 'deleteContentBackward'
+      ) {
+        alignClosingOrBlankLineAfterInput(inputType !== 'insertFromPaste' && inputType !== 'deleteContentBackward');
       }
     }
 
@@ -1815,7 +2769,7 @@ function init() {
     inputEl: els.windowBgInput,
     hexLabelEl: els.windowBgHex,
     swatchEl: els.windowBgSwatch,
-    defaultHex: '#22272E',
+    defaultHex: '#0D1117',
     onChange: applyAppearance,
   });
 
@@ -1825,7 +2779,7 @@ function init() {
     inputEl: els.titleBarBgInput,
     hexLabelEl: els.titleBarBgHex,
     swatchEl: els.titleBarBgSwatch,
-    defaultHex: '#2D333B',
+    defaultHex: '#1B1F25',
     onChange: applyAppearance,
   });
 

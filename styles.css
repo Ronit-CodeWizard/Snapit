@@ -46,8 +46,8 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
-  --snap-bg: #22272E;
-  --snap-title-bg: #2D333B;
+  --snap-bg: #0D1117;
+  --snap-title-bg: #1B1F25;
   --code-font-size: 12px;
   --code-line-height: 19px;
 }
@@ -933,13 +933,17 @@ body {
   display: block;
   width: 100%;
   min-width: 0;
+  background-color: transparent !important;
+  background-image: none !important;
 }
 
 .snapshot-export-frame {
   display: inline-block;
   min-width: 100%;
   padding: 20px;
-  background: transparent;
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
 }
 
 .snapshot-export-frame.is-wrapped {
@@ -1184,6 +1188,10 @@ body {
   overflow-x: visible;
 }
 
+.snapshot-pre code.hljs .hljs-comment {
+  color: #8B949E;
+}
+
 /* HTML Syntax Highlighting Token Colours */
 .snapshot-pre code.hljs.language-xml > .hljs-tag,
 .snapshot-pre code.hljs.language-xml > .hljs-tag .hljs-punctuation {
@@ -1202,8 +1210,8 @@ body {
   color: #CE9178;
 }
 
-.snapshot-pre code.hljs.language-xml > .hljs-comment {
-  color: #6A9955;
+.snapshot-pre code.hljs.language-xml .hljs-comment {
+  color: #8B949E;
 }
 
 .snapshot-pre code.hljs.language-xml > .hljs-meta,
@@ -1272,7 +1280,7 @@ body {
 
 .snapshot-pre code.hljs.language-css .hljs-comment,
 .snapshot-pre .language-css .hljs-comment {
-  color: #6A9955;
+  color: #8B949E;
 }
 
 .snapshot-pre code.hljs.language-css .hljs-punctuation,
@@ -1356,7 +1364,7 @@ body {
 
 .snapshot-pre code.hljs.language-javascript .hljs-comment,
 .snapshot-pre .language-javascript .hljs-comment {
-  color: #6A9955;
+  color: #8B949E;
 }
 
 .snapshot-pre code.hljs.language-javascript .hljs-punctuation,

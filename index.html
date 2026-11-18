@@ -93,10 +93,10 @@
             <div class="field-group">
               <span class="field-label">Quick setup</span>
               <div class="preset-keys" role="group" aria-label="Quick setup filenames">
-                <button type="button" class="preset-key" data-preset="index.html" aria-pressed="false">
+                <button type="button" class="preset-key is-active" data-preset="index.html" aria-pressed="true">
                   index.html
                 </button>
-                <button type="button" class="preset-key is-active" data-preset="style.css" aria-pressed="true">
+                <button type="button" class="preset-key" data-preset="style.css" aria-pressed="false">
                   style.css
                 </button>
                 <button type="button" class="preset-key" data-preset="script.js" aria-pressed="false">
@@ -154,7 +154,7 @@
             <div class="color-grid">
               <div id="windowBgPicker" class="color-control" data-align="left">
                 <span id="windowBgLabel" class="field-label">Window background</span>
-                <input id="windowBgInput" type="hidden" value="#22272E" />
+                <input id="windowBgInput" type="hidden" value="#0D1117" />
                 <button
                   id="windowBgTrigger"
                   type="button"
@@ -164,13 +164,13 @@
                   aria-labelledby="windowBgLabel windowBgHex"
                 >
                   <span id="windowBgSwatch" class="color-swatch color-swatch--window"></span>
-                  <span id="windowBgHex" class="color-hex">#22272E</span>
+                  <span id="windowBgHex" class="color-hex">#0D1117</span>
                 </button>
               </div>
 
               <div id="titleBarBgPicker" class="color-control" data-align="right">
                 <span id="titleBarBgLabel" class="field-label">Title bar</span>
-                <input id="titleBarBgInput" type="hidden" value="#2D333B" />
+                <input id="titleBarBgInput" type="hidden" value="#1B1F25" />
                 <button
                   id="titleBarBgTrigger"
                   type="button"
@@ -180,7 +180,7 @@
                   aria-labelledby="titleBarBgLabel titleBarBgHex"
                 >
                   <span id="titleBarBgSwatch" class="color-swatch color-swatch--title"></span>
-                  <span id="titleBarBgHex" class="color-hex">#2D333B</span>
+                  <span id="titleBarBgHex" class="color-hex">#1B1F25</span>
                 </button>
               </div>
             </div>
@@ -245,14 +245,14 @@
                     <div id="filenameTab" class="filename-tab">
                       <span id="languageIconSlot" class="language-icon" aria-hidden="true"></span>
                       <span class="snapshot-filename-wrap">
-                        <span id="snapshotFilename" class="snapshot-filename" aria-hidden="true">style.css</span>
+                        <span id="snapshotFilename" class="snapshot-filename" aria-hidden="true">index.html</span>
                         <input
                           id="filenameInput"
                           type="text"
                           size="1"
                           class="snapshot-filename-input"
                           aria-label="Edit filename"
-                          value="style.css"
+                          value="index.html"
                           placeholder="untitled"
                           autocomplete="off"
                           autocapitalize="off"
@@ -265,7 +265,7 @@
 
                   <div id="snapshotCodeWrap" class="snapshot-code-wrap">
                     <div class="snapshot-editor-stack">
-                      <pre class="snapshot-pre" aria-hidden="true"><code id="snapshotCode" class="hljs language-css"></code></pre>
+                      <pre class="snapshot-pre" aria-hidden="true"><code id="snapshotCode" class="hljs language-xml"></code></pre>
                       <textarea
                         id="codeInput"
                         class="snapshot-editor"
