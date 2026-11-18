@@ -1134,7 +1134,7 @@ body {
   white-space: pre;
   overflow-wrap: normal;
   word-break: normal;
-  tab-size: 2;
+  tab-size: 4;
 }
 
 .snapshot-pre {

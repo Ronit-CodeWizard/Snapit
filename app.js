@@ -1222,6 +1222,585 @@ function toggleSiteTheme() {
   }
 }
 
+const INDENT_UNIT = '    ';
+const HTML_VOID_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link',
+  'meta', 'param', 'source', 'track', 'wbr', 'command', 'keygen', 'menuitem',
+]);
+const BRACE_LANGUAGES = new Set([
+  'css', 'javascript', 'typescript', 'json', 'java', 'c', 'cpp',
+  'csharp', 'go', 'rust', 'php', 'swift', 'kotlin', 'dart',
+]);
+const COLON_LANGUAGES = new Set(['python', 'yaml']);
+
+function getLineLeadingIndent(line) {
+  const match = line.match(/^[ \t]*/);
+  return match ? match[0] : '';
+}
+
+function getCurrentLineBounds(text, cursorPos) {
+  const lineStart = text.lastIndexOf('\n', cursorPos - 1) + 1;
+  const nextNewline = text.indexOf('\n', cursorPos);
+  const lineEnd = nextNewline === -1 ? text.length : nextNewline;
+  return { lineStart, lineEnd };
+}
+
+function scanHtmlContext(text) {
+  const stack = [];
+  let i = 0;
+  const len = text.length;
+  let lineStart = 0;
+  let lineHasTag = false;
+
+  function getLineIndentAt(pos) {
+    const ls = text.lastIndexOf('\n', pos - 1) + 1;
+    let end = ls;
+    while (end < len && (text[end] === ' ' || text[end] === '\t')) {
+      end += 1;
+    }
+    return text.slice(ls, end);
+  }
+
+  while (i < len) {
+    const ch = text[i];
+    if (ch === '\n') {
+      lineStart = i + 1;
+      lineHasTag = false;
+      i += 1;
+      continue;
+    }
+
+    if (ch !== '<') {
+      i += 1;
+      continue;
+    }
+
+    if (text.startsWith('<!--', i)) {
+      const closeComment = text.indexOf('-->', i + 4);
+      if (closeComment === -1) break;
+      i = closeComment + 3;
+      continue;
+    }
+
+    if (text[i + 1] === '!' || text[i + 1] === '?') {
+      const closeDecl = text.indexOf('>', i + 2);
+      if (closeDecl === -1) break;
+      i = closeDecl + 1;
+      continue;
+    }
+
+    const topTag = stack.length > 0 ? stack[stack.length - 1].tag : '';
+    if (topTag === 'script' || topTag === 'style') {
+      const closeRawMatch = text.slice(i).match(new RegExp(`^<\\/${topTag}\\s*>`, 'i'));
+      if (!closeRawMatch) {
+        i += 1;
+        continue;
+      }
+      stack.pop();
+      i += closeRawMatch[0].length;
+      lineHasTag = true;
+      continue;
+    }
+
+    const tagHeaderMatch = text.slice(i).match(/^<(\/?)([A-Za-z][A-Za-z0-9:-]*)(?=[\s/>]|$)/);
+    if (!tagHeaderMatch) {
+      i += 1;
+      continue;
+    }
+
+    const isClosing = tagHeaderMatch[1] === '/';
+    const tagName = tagHeaderMatch[2].toLowerCase();
+    let j = i + tagHeaderMatch[0].length;
+    let quote = '';
+    let foundGt = false;
+
+    while (j < len) {
+      const c = text[j];
+      if (quote) {
+        if (c === '\\' && j + 1 < len) {
+          j += 2;
+          continue;
+        }
+        if (c === quote) quote = '';
+      } else {
+        if (c === '"' || c === "'") {
+          quote = c;
+        } else if (c === '>') {
+          foundGt = true;
+          break;
+        }
+      }
+      j += 1;
+    }
+
+    if (!foundGt) break;
+
+    const isSelfClosing = !isClosing && j > i && text[j - 1] === '/';
+
+    if (isClosing) {
+      for (let k = stack.length - 1; k >= 0; k -= 1) {
+        if (stack[k].tag === tagName) {
+          stack.length = k;
+          break;
+        }
+      }
+    } else if (!isSelfClosing && !HTML_VOID_TAGS.has(tagName)) {
+      const rawLineIndent = getLineIndentAt(i);
+      const baseIndent = !lineHasTag
+        ? rawLineIndent
+        : (stack.length > 0 ? stack[stack.length - 1].indent + INDENT_UNIT : rawLineIndent);
+      stack.push({ tag: tagName, indent: baseIndent, contentStart: j + 1, lineStart });
+    }
+
+    lineHasTag = true;
+    i = j + 1;
+  }
+
+  return { stack };
+}
+
+function scanBraceContext(text, baseIndent = '') {
+  const stack = [];
+  let i = 0;
+  const len = text.length;
+  let quote = '';
+  let inLineComment = false;
+  let inBlockComment = false;
+  let currentLineIndent = baseIndent;
+  let atLineStart = true;
+
+  while (i < len) {
+    const ch = text[i];
+
+    if (ch === '\n') {
+      inLineComment = false;
+      atLineStart = true;
+      currentLineIndent = '';
+      i += 1;
+      continue;
+    }
+
+    if (atLineStart) {
+      if (ch === ' ' || ch === '\t') {
+        currentLineIndent += ch;
+        i += 1;
+        continue;
+      }
+      atLineStart = false;
+    }
+
+    if (inLineComment) {
+      i += 1;
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (ch === '*' && text[i + 1] === '/') {
+        inBlockComment = false;
+        i += 2;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (quote) {
+      if (ch === '\\' && i + 1 < len) {
+        i += 2;
+        continue;
+      }
+      if (ch === quote) {
+        quote = '';
+      }
+      i += 1;
+      continue;
+    }
+
+    if (ch === '/' && text[i + 1] === '/') {
+      inLineComment = true;
+      i += 2;
+      continue;
+    }
+
+    if (ch === '/' && text[i + 1] === '*') {
+      inBlockComment = true;
+      i += 2;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '{' || ch === '[' || ch === '(') {
+      stack.push({ ch, indent: currentLineIndent });
+    } else if (ch === '}' || ch === ']' || ch === ')') {
+      const target = ch === '}' ? '{' : ch === ']' ? '[' : '(';
+      for (let k = stack.length - 1; k >= 0; k -= 1) {
+        if (stack[k].ch === target) {
+          stack.length = k;
+          break;
+        }
+      }
+    }
+
+    i += 1;
+  }
+
+  return { stack };
+}
+
+function getCurrentHtmlBlockIndent(textBefore) {
+  const htmlCtx = scanHtmlContext(textBefore);
+  const { stack } = htmlCtx;
+  if (stack.length === 0) {
+    return { indent: '', inRawTag: false, stack };
+  }
+
+  const top = stack[stack.length - 1];
+  if (top.tag === 'script' || top.tag === 'style') {
+    const innerText = textBefore.slice(top.contentStart);
+    const braceBase = top.indent + INDENT_UNIT;
+    const braceCtx = scanBraceContext(innerText, braceBase);
+    if (braceCtx.stack.length > 0) {
+      const topBrace = braceCtx.stack[braceCtx.stack.length - 1];
+      return { indent: topBrace.indent + INDENT_UNIT, inRawTag: true, braceBase, braceCtx, stack };
+    }
+    return { indent: braceBase, inRawTag: true, braceBase, braceCtx, stack };
+  }
+
+  return { indent: top.indent + INDENT_UNIT, inRawTag: false, stack };
+}
+
+function computeNextLineIndent(beforeCursor, afterCursor, lang) {
+  const lastNewline = beforeCursor.lastIndexOf('\n');
+  const currentLine = beforeCursor.slice(lastNewline + 1);
+  const currentIndent = getLineLeadingIndent(currentLine);
+
+  const afterLineEnd = afterCursor.indexOf('\n');
+  const afterOnSameLine = afterLineEnd === -1 ? afterCursor : afterCursor.slice(0, afterLineEnd);
+
+  const betweenHtmlTagsMatch = beforeCursor.match(/<([A-Za-z][A-Za-z0-9:-]*)(?:\s[^>]*)?>\s*$/)
+    && afterOnSameLine.match(/^\s*<\/([A-Za-z][A-Za-z0-9:-]*)\s*>/);
+  if (betweenHtmlTagsMatch) {
+    const openMatch = beforeCursor.match(/<([A-Za-z][A-Za-z0-9:-]*)(?:\s[^>]*)?>\s*$/);
+    const closeMatch = afterOnSameLine.match(/^\s*<\/([A-Za-z][A-Za-z0-9:-]*)\s*>/);
+    const openName = openMatch[1].toLowerCase();
+    const closeName = closeMatch[1].toLowerCase();
+    if (openName === closeName && !HTML_VOID_TAGS.has(openName)) {
+      return {
+        innerIndent: currentIndent + INDENT_UNIT,
+        closingIndent: currentIndent,
+        splitPair: true,
+      };
+    }
+  }
+
+  const openBraceTrimmed = beforeCursor.trimEnd();
+  const lastChar = openBraceTrimmed.slice(-1);
+  const nextTrimmed = afterOnSameLine.trimStart();
+  const nextChar = nextTrimmed[0];
+  if (
+    (lastChar === '{' && nextChar === '}') ||
+    (lastChar === '[' && nextChar === ']') ||
+    (lastChar === '(' && nextChar === ')')
+  ) {
+    return {
+      innerIndent: currentIndent + INDENT_UNIT,
+      closingIndent: currentIndent,
+      splitPair: true,
+    };
+  }
+
+  if (lang === 'html') {
+    const htmlInfo = getCurrentHtmlBlockIndent(beforeCursor);
+    return { innerIndent: htmlInfo.indent || currentIndent, splitPair: false };
+  }
+
+  if (COLON_LANGUAGES.has(lang)) {
+    const stripped = currentLine.replace(/\s+#.*$/, '').trimEnd();
+    if (stripped.endsWith(':')) {
+      return { innerIndent: currentIndent + INDENT_UNIT, splitPair: false };
+    }
+    return { innerIndent: currentIndent, splitPair: false };
+  }
+
+  if (BRACE_LANGUAGES.has(lang)) {
+    const braceCtx = scanBraceContext(beforeCursor);
+    if (braceCtx.stack.length > 0) {
+      const top = braceCtx.stack[braceCtx.stack.length - 1];
+      return { innerIndent: top.indent + INDENT_UNIT, splitPair: false };
+    }
+
+    const htmlCtx = scanHtmlContext(beforeCursor);
+    if (htmlCtx.stack.length > 0) {
+      const topHtml = htmlCtx.stack[htmlCtx.stack.length - 1];
+      return { innerIndent: topHtml.indent + INDENT_UNIT, splitPair: false };
+    }
+
+    if (currentLine.trimEnd().endsWith('=>')) {
+      return { innerIndent: currentIndent + INDENT_UNIT, splitPair: false };
+    }
+
+    return { innerIndent: currentIndent, splitPair: false };
+  }
+
+  const fallbackHtml = scanHtmlContext(beforeCursor);
+  if (fallbackHtml.stack.length > 0) {
+    const topHtml = fallbackHtml.stack[fallbackHtml.stack.length - 1];
+    return { innerIndent: topHtml.indent + INDENT_UNIT, splitPair: false };
+  }
+
+  const fallbackBrace = scanBraceContext(beforeCursor);
+  if (fallbackBrace.stack.length > 0) {
+    const topBrace = fallbackBrace.stack[fallbackBrace.stack.length - 1];
+    return { innerIndent: topBrace.indent + INDENT_UNIT, splitPair: false };
+  }
+
+  return { innerIndent: currentIndent, splitPair: false };
+}
+
+function getAlignedHtmlCloseIndent(beforeLineText, closingTagName) {
+  const { stack } = scanHtmlContext(beforeLineText);
+  if (stack.length === 0) return null;
+
+  if (closingTagName) {
+    const lower = closingTagName.toLowerCase();
+    for (let k = stack.length - 1; k >= 0; k -= 1) {
+      if (stack[k].tag === lower) {
+        return stack[k].indent;
+      }
+    }
+    return null;
+  }
+
+  return stack[stack.length - 1].indent;
+}
+
+function getAlignedBraceCloseIndent(beforeLineText, closeChar, lang) {
+  const targetOpen = closeChar === '}' ? '{' : closeChar === ']' ? '[' : '(';
+
+  if (lang === 'html') {
+    const htmlCtx = scanHtmlContext(beforeLineText);
+    const { stack } = htmlCtx;
+    if (stack.length > 0) {
+      const top = stack[stack.length - 1];
+      if (top.tag === 'script' || top.tag === 'style') {
+        const innerText = beforeLineText.slice(top.contentStart);
+        const braceCtx = scanBraceContext(innerText, top.indent + INDENT_UNIT);
+        for (let k = braceCtx.stack.length - 1; k >= 0; k -= 1) {
+          if (braceCtx.stack[k].ch === targetOpen) {
+            return braceCtx.stack[k].indent;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  const braceCtx = scanBraceContext(beforeLineText);
+  for (let k = braceCtx.stack.length - 1; k >= 0; k -= 1) {
+    if (braceCtx.stack[k].ch === targetOpen) {
+      return braceCtx.stack[k].indent;
+    }
+  }
+  return null;
+}
+
+function setupSmartEditor(textarea) {
+  if (!textarea) return;
+
+  let prevValue = textarea.value;
+  let handledByKeydown = false;
+
+  function syncSnapshotState() {
+    prevValue = textarea.value;
+  }
+
+  function insertSmartEnter(start, end) {
+    const value = textarea.value;
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const lang = getResolvedLanguage().lang;
+    const plan = computeNextLineIndent(before, after, lang);
+
+    if (plan.splitPair) {
+      const insertText = `\n${plan.innerIndent}\n${plan.closingIndent}`;
+      textarea.setRangeText(insertText, start, end, 'end');
+      const caretPos = start + 1 + plan.innerIndent.length;
+      textarea.setSelectionRange(caretPos, caretPos);
+    } else {
+      const insertText = `\n${plan.innerIndent}`;
+      textarea.setRangeText(insertText, start, end, 'end');
+    }
+
+    syncSnapshotState();
+    updateSnapshotContent();
+  }
+
+  function handleIndentLines(isOutdent) {
+    const value = textarea.value;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+
+    if (!isOutdent && start === end) {
+      textarea.setRangeText(INDENT_UNIT, start, end, 'end');
+      syncSnapshotState();
+      updateSnapshotContent();
+      return;
+    }
+
+    const blockStart = value.lastIndexOf('\n', start - 1) + 1;
+    const endNewlineSearchPos = end > start && value[end - 1] === '\n' ? end - 1 : end;
+    const nextNewline = value.indexOf('\n', endNewlineSearchPos);
+    const blockEnd = nextNewline === -1 ? value.length : nextNewline;
+
+    const block = value.slice(blockStart, blockEnd);
+    const lines = block.split('\n');
+    let firstDelta = 0;
+    let totalDelta = 0;
+
+    const nextLines = lines.map((line, idx) => {
+      if (!isOutdent) {
+        if (idx === 0) firstDelta = INDENT_UNIT.length;
+        totalDelta += INDENT_UNIT.length;
+        return `${INDENT_UNIT}${line}`;
+      }
+
+      let removeCount = 0;
+      if (line.startsWith('\t')) {
+        removeCount = 1;
+      } else {
+        while (removeCount < INDENT_UNIT.length && line[removeCount] === ' ') {
+          removeCount += 1;
+        }
+      }
+      if (idx === 0) firstDelta = -removeCount;
+      totalDelta -= removeCount;
+      return line.slice(removeCount);
+    });
+
+    textarea.setRangeText(nextLines.join('\n'), blockStart, blockEnd, 'preserve');
+    const newStart = Math.max(blockStart, start + firstDelta);
+    const newEnd = Math.max(newStart, end + totalDelta);
+    textarea.setSelectionRange(newStart, newEnd);
+    syncSnapshotState();
+    updateSnapshotContent();
+  }
+
+  function alignCurrentLineIndent(targetIndent) {
+    if (targetIndent === null || targetIndent === undefined) return false;
+    const value = textarea.value;
+    const cursor = textarea.selectionStart;
+    const { lineStart } = getCurrentLineBounds(value, cursor);
+    const lineBeforeCursor = value.slice(lineStart, cursor);
+    const currentIndent = getLineLeadingIndent(lineBeforeCursor);
+
+    if (currentIndent === targetIndent) return false;
+
+    const delta = targetIndent.length - currentIndent.length;
+    textarea.setRangeText(targetIndent, lineStart, lineStart + currentIndent.length, 'preserve');
+    const nextCursor = Math.max(lineStart, cursor + delta);
+    textarea.setSelectionRange(nextCursor, nextCursor);
+    syncSnapshotState();
+    return true;
+  }
+
+  function alignClosingConstructAfterInput() {
+    const value = textarea.value;
+    const cursor = textarea.selectionStart;
+    if (cursor !== textarea.selectionEnd || cursor === 0) return;
+
+    const typedChar = value[cursor - 1];
+    const { lineStart, lineEnd } = getCurrentLineBounds(value, cursor);
+    const lineBeforeCursor = value.slice(lineStart, cursor);
+    const lineAfterCursor = value.slice(cursor, lineEnd);
+
+    if (lineAfterCursor.trim() !== '') return;
+
+    const beforeLineText = lineStart > 0 ? value.slice(0, lineStart - 1) : '';
+    const lang = getResolvedLanguage().lang;
+
+    if (typedChar === '/' && /^[ \t]*<\/$/.test(lineBeforeCursor)) {
+      const targetIndent = getAlignedHtmlCloseIndent(beforeLineText, '');
+      alignCurrentLineIndent(targetIndent);
+      return;
+    }
+
+    if (typedChar === '>') {
+      const closeTagMatch = lineBeforeCursor.match(/^[ \t]*<\/([A-Za-z][A-Za-z0-9:-]*)\s*>$/);
+      if (closeTagMatch) {
+        const targetIndent = getAlignedHtmlCloseIndent(beforeLineText, closeTagMatch[1]);
+        alignCurrentLineIndent(targetIndent);
+      }
+      return;
+    }
+
+    if (typedChar === '}' || typedChar === ']' || typedChar === ')') {
+      const closeBracePattern = new RegExp(`^[ \\t]*\\${typedChar}$`);
+      if (closeBracePattern.test(lineBeforeCursor)) {
+        const targetIndent = getAlignedBraceCloseIndent(beforeLineText, typedChar, lang);
+        alignCurrentLineIndent(targetIndent);
+      }
+    }
+  }
+
+  textarea.addEventListener('focus', syncSnapshotState);
+  textarea.addEventListener('beforeinput', () => {
+    prevValue = textarea.value;
+  });
+
+  textarea.addEventListener('keydown', (event) => {
+    handledByKeydown = false;
+    if (event.isComposing || event.keyCode === 229) return;
+
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      handledByKeydown = true;
+      handleIndentLines(event.shiftKey);
+      return;
+    }
+
+    if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      handledByKeydown = true;
+      insertSmartEnter(textarea.selectionStart, textarea.selectionEnd);
+    }
+  });
+
+  textarea.addEventListener('input', (event) => {
+    if (handledByKeydown) {
+      handledByKeydown = false;
+      syncSnapshotState();
+      return;
+    }
+
+    const value = textarea.value;
+    const cursor = textarea.selectionStart;
+    const inputType = event.inputType || '';
+
+    const isPasteOrHistory = inputType === 'historyUndo' || inputType === 'historyRedo' || inputType === 'insertFromPaste';
+    if (!isPasteOrHistory && cursor === textarea.selectionEnd && cursor > 0) {
+      const addedOneChar = value.length === prevValue.length + 1;
+      if ((inputType === 'insertLineBreak' || addedOneChar) && value[cursor - 1] === '\n') {
+        const rawNewlineStart = cursor - 1;
+        textarea.setRangeText('', rawNewlineStart, cursor, 'end');
+        insertSmartEnter(rawNewlineStart, rawNewlineStart);
+        return;
+      }
+
+      if (addedOneChar || inputType === 'insertText') {
+        alignClosingConstructAfterInput();
+      }
+    }
+
+    syncSnapshotState();
+    updateSnapshotContent();
+  });
+}
+
 function init() {
   applySiteTheme(getSavedSiteTheme());
   els.codeInput.value = DEFAULT_CODE;
@@ -1290,17 +1869,7 @@ function init() {
   }
 
   els.languageSelect.addEventListener('change', updateSnapshotContent);
-  els.codeInput.addEventListener('input', updateSnapshotContent);
-
-  els.codeInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Tab') {
-      event.preventDefault();
-      const start = els.codeInput.selectionStart;
-      const end = els.codeInput.selectionEnd;
-      els.codeInput.setRangeText('  ', start, end, 'end');
-      updateSnapshotContent();
-    }
-  });
+  setupSmartEditor(els.codeInput);
 
   if (els.snapshotCodeWrap) {
     els.snapshotCodeWrap.addEventListener('click', (event) => {
