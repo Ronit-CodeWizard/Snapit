@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>codesnap</title>
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230A0A0A'/%3E%3Cpath d='M8.5 11.5V9.2C8.5 8.8 8.8 8.5 9.2 8.5H11.5M20.5 8.5H22.8C23.2 8.5 23.5 8.8 23.5 9.2V11.5M23.5 20.5V22.8C23.5 23.2 23.2 23.5 22.8 23.5H20.5M11.5 23.5H9.2C8.8 23.5 8.5 23.2 8.5 22.8V20.5' fill='none' stroke='%23FFFFFF' stroke-opacity='0.65' stroke-width='1.8' stroke-linecap='round'/%3E%3Cpath d='M13.3 13.3L10.6 16L13.3 18.7M18.7 13.3L21.4 16L18.7 18.7M17 12.4L15 19.6' fill='none' stroke='%23FFFFFF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <meta
+      name="description"
+      content="Create beautiful code snapshots with live syntax highlighting and instant PNG, JPG, and SVG export."
+    />
+    <meta property="og:title" content="codesnap" />
+    <meta
+      property="og:description"
+      content="Create beautiful code snapshots with live syntax highlighting and instant PNG, JPG, and SVG export."
+    />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta id="themeColorMeta" name="theme-color" content="#F2F2F4" />
+    <script>
+      try {
+        if (localStorage.getItem('code-snapshot-studio-theme') === 'dark') {
+          document.documentElement.setAttribute('data-theme', 'dark');
+          document.getElementById('themeColorMeta').setAttribute('content', '#08080A');
+        }
+      } catch (e) {}
+    </script>
+
+    <link
+      id="hljsThemeLink"
+      rel="stylesheet"
+      crossorigin="anonymous"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark-dimmed.min.css"
+    />
+    <link
+      id="deviconLink"
+      rel="stylesheet"
+      crossorigin="anonymous"
+      href="https://cdn.jsdelivr.net/gh/devicons/devicon@v2.16.0/devicon.min.css"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="site-header">
+        <div class="brand">
+          <div class="brand-logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" class="brand-logo-svg">
+              <path
+                d="M4.5 8.5V5.75C4.5 5.06 5.06 4.5 5.75 4.5H8.5M15.5 4.5H18.25C18.94 4.5 19.5 5.06 19.5 5.75V8.5M19.5 15.5V18.25C19.5 18.94 18.94 19.5 18.25 19.5H15.5M8.5 19.5H5.75C5.06 19.5 4.5 18.94 4.5 18.25V15.5"
+                stroke="currentColor"
+                stroke-opacity="0.58"
+                stroke-width="1.65"
+                stroke-linecap="round"
+              />
+              <path
+                d="M9.6 9.4L7 12L9.6 14.6M14.4 9.4L17 12L14.4 14.6M12.9 8.6L11.1 15.4"
+                stroke="currentColor"
+                stroke-width="1.85"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="brand-text">
+            <h1 class="brand-title">codesnap</h1>
+          </div>
+        </div>
+
+        <button
+          id="themeToggleBtn"
+          type="button"
+          class="theme-toggle-btn"
+          aria-pressed="false"
+          aria-label="Switch to dark mode"
+        >
+          <span id="themeToggleIcon" class="theme-toggle-icon" aria-hidden="true"></span>
+          <span id="themeToggleLabel">Dark</span>
+        </button>
+      </header>
+
+      <div id="libraryNotice" class="notice-banner" role="status" aria-live="polite" hidden></div>
+
+      <main class="studio-layout">
+        <aside class="settings-column" aria-label="Snapshot settings">
+          <section class="card" aria-labelledby="codeCardHeading">
+            <h2 id="codeCardHeading" class="card-title">Code</h2>
+
+            <div class="field-group">
+              <span class="field-label">Quick setup</span>
+              <div class="preset-keys" role="group" aria-label="Quick setup filenames">
+                <button type="button" class="preset-key" data-preset="index.html" aria-pressed="false">
+                  index.html
+                </button>
+                <button type="button" class="preset-key is-active" data-preset="style.css" aria-pressed="true">
+                  style.css
+                </button>
+                <button type="button" class="preset-key" data-preset="script.js" aria-pressed="false">
+                  script.js
+                </button>
+              </div>
+            </div>
+
+            <div class="field-group field-group--row">
+              <div class="field-col field-col--lang">
+                <span id="languageLabel" class="field-label">Language</span>
+                <select id="languageSelect" class="select-input select-input--compact" aria-labelledby="languageLabel">
+                  <option value="auto" selected>Auto detect</option>
+                  <option value="css">CSS</option>
+                  <option value="javascript">JavaScript</option>
+                  <option value="typescript">TypeScript</option>
+                  <option value="html">HTML</option>
+                  <option value="python">Python</option>
+                  <option value="java">Java</option>
+                  <option value="json">JSON</option>
+                  <option value="bash">Bash</option>
+                  <option value="sql">SQL</option>
+                  <option value="go">Go</option>
+                  <option value="rust">Rust</option>
+                  <option value="c">C</option>
+                  <option value="cpp">C++</option>
+                  <option value="csharp">C#</option>
+                  <option value="php">PHP</option>
+                  <option value="ruby">Ruby</option>
+                  <option value="swift">Swift</option>
+                  <option value="kotlin">Kotlin</option>
+                  <option value="dart">Dart</option>
+                  <option value="yaml">YAML</option>
+                  <option value="markdown">Markdown</option>
+                  <option value="plaintext">Plain Text</option>
+                </select>
+              </div>
+
+              <div class="field-col field-col--size">
+                <span id="fontSizeLabel" class="field-label">Font size</span>
+                <select id="fontSizeSelect" class="select-input select-input--compact" aria-labelledby="fontSizeLabel">
+                  <option value="12" selected>12px</option>
+                  <option value="14">14px</option>
+                  <option value="16">16px</option>
+                  <option value="18">18px</option>
+                  <option value="20">20px</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section class="card" aria-labelledby="appearanceCardHeading">
+            <h2 id="appearanceCardHeading" class="card-title">Appearance</h2>
+
+            <div class="color-grid">
+              <div id="windowBgPicker" class="color-control" data-align="left">
+                <span id="windowBgLabel" class="field-label">Window background</span>
+                <input id="windowBgInput" type="hidden" value="#22272E" />
+                <button
+                  id="windowBgTrigger"
+                  type="button"
+                  class="color-picker-wrap"
+                  aria-haspopup="dialog"
+                  aria-expanded="false"
+                  aria-labelledby="windowBgLabel windowBgHex"
+                >
+                  <span id="windowBgSwatch" class="color-swatch color-swatch--window"></span>
+                  <span id="windowBgHex" class="color-hex">#22272E</span>
+                </button>
+              </div>
+
+              <div id="titleBarBgPicker" class="color-control" data-align="right">
+                <span id="titleBarBgLabel" class="field-label">Title bar</span>
+                <input id="titleBarBgInput" type="hidden" value="#2D333B" />
+                <button
+                  id="titleBarBgTrigger"
+                  type="button"
+                  class="color-picker-wrap"
+                  aria-haspopup="dialog"
+                  aria-expanded="false"
+                  aria-labelledby="titleBarBgLabel titleBarBgHex"
+                >
+                  <span id="titleBarBgSwatch" class="color-swatch color-swatch--title"></span>
+                  <span id="titleBarBgHex" class="color-hex">#2D333B</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="toggle-list">
+              <label class="toggle-row" for="showControlsInput">
+                <input id="showControlsInput" type="checkbox" class="checkbox-input" checked />
+                <span class="toggle-label">Show window controls</span>
+              </label>
+
+              <label class="toggle-row" for="showFilenameInput">
+                <input id="showFilenameInput" type="checkbox" class="checkbox-input" checked />
+                <span class="toggle-label">Show filename and language icon</span>
+              </label>
+
+              <label class="toggle-row" for="wrapLinesInput">
+                <input id="wrapLinesInput" type="checkbox" class="checkbox-input" />
+                <span class="toggle-label">Wrap long lines</span>
+              </label>
+            </div>
+          </section>
+
+          <section class="card" aria-labelledby="exportCardHeading">
+            <h2 id="exportCardHeading" class="card-title">Export</h2>
+
+            <div class="field-group">
+              <span id="exportFormatLabel" class="field-label">Format</span>
+              <select id="exportFormatSelect" class="select-input" aria-labelledby="exportFormatLabel">
+                <option value="png" selected>PNG</option>
+                <option value="jpg">JPG</option>
+                <option value="svg">SVG</option>
+              </select>
+            </div>
+
+            <div class="toggle-list">
+              <label id="transparentToggleRow" class="toggle-row" for="transparentBgInput">
+                <input id="transparentBgInput" type="checkbox" class="checkbox-input" checked />
+                <span class="toggle-label">Transparent background (PNG)</span>
+              </label>
+            </div>
+
+            <button id="downloadBtn" type="button" class="primary-button">
+              Download snapshot
+            </button>
+
+            <p id="exportError" class="error-message" role="alert" hidden></p>
+          </section>
+        </aside>
+
+        <section class="preview-column" aria-label="Snapshot preview">
+          <div class="preview-canvas">
+            <div class="preview-stage">
+              <div id="snapshotExportFrame" class="snapshot-export-frame">
+                <div id="snapshotNode" class="snapshot-window">
+                  <div id="snapshotTitleBar" class="snapshot-title-bar">
+                    <div id="windowControls" class="window-controls" aria-hidden="true">
+                      <span class="window-dot window-dot--red"></span>
+                      <span class="window-dot window-dot--yellow"></span>
+                      <span class="window-dot window-dot--green"></span>
+                    </div>
+
+                    <div id="filenameTab" class="filename-tab">
+                      <span id="languageIconSlot" class="language-icon" aria-hidden="true"></span>
+                      <span class="snapshot-filename-wrap">
+                        <span id="snapshotFilename" class="snapshot-filename" aria-hidden="true">style.css</span>
+                        <input
+                          id="filenameInput"
+                          type="text"
+                          size="1"
+                          class="snapshot-filename-input"
+                          aria-label="Edit filename"
+                          value="style.css"
+                          placeholder="untitled"
+                          autocomplete="off"
+                          autocapitalize="off"
+                          autocorrect="off"
+                          spellcheck="false"
+                        />
+                      </span>
+                    </div>
+                  </div>
+
+                  <div id="snapshotCodeWrap" class="snapshot-code-wrap">
+                    <div class="snapshot-editor-stack">
+                      <pre class="snapshot-pre" aria-hidden="true"><code id="snapshotCode" class="hljs language-css"></code></pre>
+                      <textarea
+                        id="codeInput"
+                        class="snapshot-editor"
+                        aria-label="Edit source code inside snapshot"
+                        placeholder="Type or paste code..."
+                        autocomplete="off"
+                        autocapitalize="off"
+                        autocorrect="off"
+                        spellcheck="false"
+                      ></textarea>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script
+      crossorigin="anonymous"
+      src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"
+    ></script>
+    <script
+      crossorigin="anonymous"
+      src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/dart.min.js"
+    ></script>
+    <script
+      crossorigin="anonymous"
+      src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"
+    ></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

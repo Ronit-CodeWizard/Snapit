@@ -1,0 +1,6 @@
+{
+  "name": "Code Snapshot Studio",
+  "description": "Create beautiful code snapshots with live GitHub Dark Dimmed syntax highlighting and instant PNG, SVG, PDF, and HTML export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
