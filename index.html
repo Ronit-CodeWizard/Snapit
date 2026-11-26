@@ -2,13 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>codesnap</title>
-    <link
-      rel="icon"
-      type="image/svg+xml"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230A0A0A'/%3E%3Cpath d='M8.5 11.5V9.2C8.5 8.8 8.8 8.5 9.2 8.5H11.5M20.5 8.5H22.8C23.2 8.5 23.5 8.8 23.5 9.2V11.5M23.5 20.5V22.8C23.5 23.2 23.2 23.5 22.8 23.5H20.5M11.5 23.5H9.2C8.8 23.5 8.5 23.2 8.5 22.8V20.5' fill='none' stroke='%23FFFFFF' stroke-opacity='0.65' stroke-width='1.8' stroke-linecap='round'/%3E%3Cpath d='M13.3 13.3L10.6 16L13.3 18.7M18.7 13.3L21.4 16L18.7 18.7M17 12.4L15 19.6' fill='none' stroke='%23FFFFFF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
-    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="codesnap" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <meta
       name="description"
       content="Create beautiful code snapshots with live syntax highlighting and instant PNG, JPG, and SVG export."
@@ -71,23 +72,40 @@
           </div>
         </div>
 
-        <button
-          id="themeToggleBtn"
-          type="button"
-          class="theme-toggle-btn"
-          aria-pressed="false"
-          aria-label="Switch to dark mode"
-        >
-          <span id="themeToggleIcon" class="theme-toggle-icon" aria-hidden="true"></span>
-          <span id="themeToggleLabel">Dark</span>
-        </button>
+        <div class="header-actions">
+          <button
+            id="installAppBtn"
+            type="button"
+            class="install-app-btn"
+            aria-label="Install codesnap app"
+            hidden
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3v12" />
+              <path d="m7 10 5 5 5-5" />
+              <path d="M5 20h14" />
+            </svg>
+            <span id="installAppLabel">Install</span>
+          </button>
+
+          <button
+            id="themeToggleBtn"
+            type="button"
+            class="theme-toggle-btn"
+            aria-pressed="false"
+            aria-label="Switch to dark mode"
+          >
+            <span id="themeToggleIcon" class="theme-toggle-icon" aria-hidden="true"></span>
+            <span id="themeToggleLabel">Dark</span>
+          </button>
+        </div>
       </header>
 
       <div id="libraryNotice" class="notice-banner" role="status" aria-live="polite" hidden></div>
 
-      <main class="studio-layout">
+      <main id="studioLayout" class="studio-layout" data-mobile-tab="code">
         <aside class="settings-column" aria-label="Snapshot settings">
-          <section class="card" aria-labelledby="codeCardHeading">
+          <section class="card" data-mobile-panel="code" aria-labelledby="codeCardHeading">
             <h2 id="codeCardHeading" class="card-title">Code</h2>
 
             <div class="field-group">
@@ -148,7 +166,7 @@
             </div>
           </section>
 
-          <section class="card" aria-labelledby="appearanceCardHeading">
+          <section class="card" data-mobile-panel="style" aria-labelledby="appearanceCardHeading">
             <h2 id="appearanceCardHeading" class="card-title">Appearance</h2>
 
             <div class="color-grid">
@@ -203,7 +221,7 @@
             </div>
           </section>
 
-          <section class="card" aria-labelledby="exportCardHeading">
+          <section class="card" data-mobile-panel="export" aria-labelledby="exportCardHeading">
             <h2 id="exportCardHeading" class="card-title">Export</h2>
 
             <div class="field-group">
@@ -222,9 +240,15 @@
               </label>
             </div>
 
-            <button id="downloadBtn" type="button" class="primary-button">
-              Download snapshot
-            </button>
+            <div class="export-actions">
+              <button id="downloadBtn" type="button" class="primary-button">
+                Download snapshot
+              </button>
+
+              <button id="shareBtn" type="button" class="secondary-button" hidden>
+                Share snapshot
+              </button>
+            </div>
 
             <p id="exportError" class="error-message" role="alert" hidden></p>
           </section>
@@ -284,6 +308,83 @@
           </div>
         </section>
       </main>
+
+      <nav id="mobileTabBar" class="mobile-tab-bar" role="tablist" aria-label="Studio sections">
+        <button
+          type="button"
+          class="mobile-tab-btn is-active"
+          role="tab"
+          aria-selected="true"
+          data-tab-target="code"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="16 18 22 12 16 6" />
+            <polyline points="8 6 2 12 8 18" />
+          </svg>
+          <span>Code</span>
+        </button>
+
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          role="tab"
+          aria-selected="false"
+          data-tab-target="style"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+            <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+            <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+            <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+            <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.5-.75 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c3.31 0 6-2.69 6-6 0-4.96-4.49-9-10-9z" />
+          </svg>
+          <span>Style</span>
+        </button>
+
+        <button
+          type="button"
+          class="mobile-tab-btn"
+          role="tab"
+          aria-selected="false"
+          data-tab-target="export"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          <span>Export</span>
+        </button>
+      </nav>
+    </div>
+
+    <div
+      id="iosInstallModal"
+      class="ios-install-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="iosInstallTitle"
+      hidden
+    >
+      <div class="ios-install-sheet">
+        <div class="ios-install-handle" aria-hidden="true"></div>
+        <h2 id="iosInstallTitle" class="ios-install-title">Install codesnap</h2>
+        <p class="ios-install-copy">
+          Add codesnap to your Home Screen for full-screen offline access:
+        </p>
+        <ol class="ios-install-steps">
+          <li>Tap the <strong>Share</strong> button in Safari's toolbar.</li>
+          <li>Scroll down and choose <strong>Add to Home Screen</strong>.</li>
+          <li>Tap <strong>Add</strong> in the top-right corner.</li>
+        </ol>
+        <button id="iosInstallCloseBtn" type="button" class="primary-button">
+          Got it
+        </button>
+      </div>
+    </div>
+
+    <div id="offlineToast" class="offline-toast" role="status" aria-live="polite" hidden>
+      Offline mode — cached workspace active
     </div>
 
     <script

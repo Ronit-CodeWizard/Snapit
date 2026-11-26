@@ -114,6 +114,7 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100vh;
+  min-height: 100dvh;
   background-color: var(--bg-page);
   background-image: var(--bg-backdrop);
   background-attachment: fixed;
@@ -122,6 +123,8 @@ body {
   font-size: 14px;
   line-height: 1.5;
   overflow-x: clip;
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 [hidden] {
@@ -132,7 +135,7 @@ body {
   width: 100%;
   max-width: 1240px;
   margin: 0 auto;
-  padding: 10px 10px 20px;
+  padding: calc(10px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(80px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
 }
 
 /* Header */
@@ -184,6 +187,54 @@ body {
   line-height: 1.2;
   color: var(--text-primary);
   letter-spacing: -0.015em;
+}
+
+.header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.install-app-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--btn-bg);
+  border-radius: 9999px;
+  background: var(--btn-bg);
+  box-shadow: var(--btn-glass-shadow);
+  color: var(--btn-text);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.12s ease;
+}
+
+.install-app-btn:hover {
+  background: var(--btn-bg-hover);
+}
+
+.install-app-btn:active {
+  transform: scale(0.97);
+}
+
+.install-app-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.install-app-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 .theme-toggle-btn {
@@ -1533,3 +1584,230 @@ body {
     font-size: 11px;
   }
 }
+
+/* Export action stack & secondary mobile Share CTA */
+.export-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.secondary-button {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--border-input);
+  border-radius: 12px;
+  background: var(--bg-toggle);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: inset 0 1px 0 var(--glass-border);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.12s ease;
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: var(--bg-toggle-hover);
+}
+
+.secondary-button:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.secondary-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondary-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Mobile-first App Navigation & Touch Ergonomics (< 900px) */
+.mobile-tab-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  padding: 4px calc(8px + env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left));
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border-top: 1px solid var(--border-card);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
+}
+
+.mobile-tab-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 48px;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease, transform 0.12s ease;
+}
+
+.mobile-tab-btn svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.mobile-tab-btn.is-active {
+  color: var(--text-primary);
+  font-weight: 650;
+  background: var(--bg-toggle-hover);
+}
+
+.mobile-tab-btn:active {
+  transform: scale(0.96);
+}
+
+.mobile-tab-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+@media (max-width: 899px) {
+  .studio-layout[data-mobile-tab="code"] .card:not([data-mobile-panel="code"]),
+  .studio-layout[data-mobile-tab="style"] .card:not([data-mobile-panel="style"]),
+  .studio-layout[data-mobile-tab="export"] .card:not([data-mobile-panel="export"]) {
+    display: none;
+  }
+
+  .theme-toggle-btn,
+  .install-app-btn {
+    min-height: 40px;
+    padding: 8px 13px;
+  }
+
+  .preset-key,
+  .custom-select-trigger,
+  .custom-select-trigger--compact,
+  .color-picker-wrap,
+  .toggle-row,
+  .primary-button {
+    min-height: 44px;
+  }
+}
+
+/* iOS Install Guide Bottom Sheet Modal */
+.ios-install-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, 0.52);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.ios-install-sheet {
+  width: 100%;
+  max-width: 400px;
+  padding: 12px 20px 20px;
+  border-radius: 22px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.3);
+}
+
+.ios-install-handle {
+  width: 38px;
+  height: 4px;
+  margin: 0 auto 14px;
+  border-radius: 9999px;
+  background: var(--border-input);
+}
+
+.ios-install-title {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.ios-install-copy {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+
+.ios-install-steps {
+  margin: 0 0 18px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--text-primary);
+}
+
+@media (min-width: 600px) {
+  .ios-install-modal {
+    align-items: center;
+  }
+}
+
+/* Non-intrusive Offline Connectivity Toast */
+.offline-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(68px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 100;
+  max-width: calc(100vw - 32px);
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--warn-border);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+}
+
+@media (min-width: 900px) {
+  .app-shell {
+    padding: 12px 16px 24px;
+  }
+
+  .mobile-tab-bar {
+    display: none;
+  }
+
+  .offline-toast {
+    left: 16px;
+    bottom: 16px;
+    transform: none;
+  }
+}
+

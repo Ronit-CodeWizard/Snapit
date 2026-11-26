@@ -1,3 +1,5 @@
+import { registerSW } from 'virtual:pwa-register';
+
 const DEFAULT_CODE = '';
 
 const COLOR_PRESETS = [
@@ -109,6 +111,7 @@ const els = {
   transparentToggleRow: document.getElementById('transparentToggleRow'),
   transparentBgInput: document.getElementById('transparentBgInput'),
   downloadBtn: document.getElementById('downloadBtn'),
+  shareBtn: document.getElementById('shareBtn'),
   exportError: document.getElementById('exportError'),
   snapshotExportFrame: document.getElementById('snapshotExportFrame'),
   snapshotNode: document.getElementById('snapshotNode'),
@@ -123,6 +126,13 @@ const els = {
   themeToggleBtn: document.getElementById('themeToggleBtn'),
   themeToggleIcon: document.getElementById('themeToggleIcon'),
   themeToggleLabel: document.getElementById('themeToggleLabel'),
+  installAppBtn: document.getElementById('installAppBtn'),
+  installAppLabel: document.getElementById('installAppLabel'),
+  iosInstallModal: document.getElementById('iosInstallModal'),
+  iosInstallCloseBtn: document.getElementById('iosInstallCloseBtn'),
+  offlineToast: document.getElementById('offlineToast'),
+  studioLayout: document.getElementById('studioLayout'),
+  mobileTabButtons: Array.from(document.querySelectorAll('.mobile-tab-btn')),
   presetKeys: Array.from(document.querySelectorAll('.preset-key')),
 };
 
@@ -1249,7 +1259,7 @@ async function verifyPngBlobHeader(blob) {
   }
 }
 
-async function exportPng() {
+async function buildPngBlob() {
   const transparentBg = els.transparentBgInput.checked;
   const target = els.snapshotExportFrame || els.snapshotNode;
   const rect = target.getBoundingClientRect();
@@ -1309,6 +1319,11 @@ async function exportPng() {
   if (transparentBg) {
     await verifyPngBlobHeader(pngBlob);
   }
+  return pngBlob;
+}
+
+async function exportPng() {
+  const pngBlob = await buildPngBlob();
   triggerDownload(pngBlob, getExportFilename('png'));
 }
 
@@ -1335,12 +1350,43 @@ async function exportSvg() {
   triggerDownload(blob, getExportFilename('svg'));
 }
 
+async function buildSnapshotFileForShare(format) {
+  if (format === 'png') {
+    const blob = await buildPngBlob();
+    return new File([blob], getExportFilename('png'), { type: 'image/png' });
+  }
+  if (format === 'jpg') {
+    const target = els.snapshotExportFrame || els.snapshotNode;
+    const pixelRatio = getMaxPixelRatio(target);
+    const dataUrl = await captureSnapshot(target, 'toJpeg', {
+      pixelRatio,
+      quality: 1.0,
+      cacheBust: true,
+      backgroundColor: '#FFFFFF',
+    });
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    return new File([blob], getExportFilename('jpg'), { type: 'image/jpeg' });
+  }
+  if (format === 'svg') {
+    const dataUrl = await captureSnapshot(els.snapshotNode, 'toSvg', {
+      cacheBust: true,
+      style: { boxShadow: 'none' },
+    });
+    const svgXml = dataUriToSvgString(dataUrl);
+    const blob = new Blob([svgXml], { type: 'image/svg+xml;charset=utf-8' });
+    return new File([blob], getExportFilename('svg'), { type: 'image/svg+xml' });
+  }
+  throw new Error(`Unsupported export format: ${format}`);
+}
+
 async function handleDownload() {
   if (isExporting) return;
 
   const format = els.exportFormatSelect.value;
   isExporting = true;
   els.downloadBtn.disabled = true;
+  if (els.shareBtn) els.shareBtn.disabled = true;
   els.downloadBtn.textContent = 'Preparing...';
   els.exportError.hidden = true;
   els.exportError.textContent = '';
@@ -1364,7 +1410,50 @@ async function handleDownload() {
   } finally {
     isExporting = false;
     els.downloadBtn.disabled = false;
+    if (els.shareBtn) els.shareBtn.disabled = false;
     els.downloadBtn.textContent = 'Download snapshot';
+  }
+}
+
+async function handleShare() {
+  if (isExporting || typeof navigator.share !== 'function') return;
+
+  const format = els.exportFormatSelect.value;
+  isExporting = true;
+  els.downloadBtn.disabled = true;
+  if (els.shareBtn) {
+    els.shareBtn.disabled = true;
+    els.shareBtn.textContent = 'Preparing...';
+  }
+  els.exportError.hidden = true;
+  els.exportError.textContent = '';
+
+  try {
+    const file = await buildSnapshotFileForShare(format);
+    if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [file] })) {
+      triggerDownload(file, file.name);
+      return;
+    }
+    await navigator.share({
+      files: [file],
+      title: file.name,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      return;
+    }
+    const message = err instanceof Error && err.message
+      ? err.message
+      : 'Could not share snapshot. Please try downloading instead.';
+    els.exportError.textContent = message;
+    els.exportError.hidden = false;
+  } finally {
+    isExporting = false;
+    els.downloadBtn.disabled = false;
+    if (els.shareBtn) {
+      els.shareBtn.disabled = false;
+      els.shareBtn.textContent = 'Share snapshot';
+    }
   }
 }
 
@@ -2841,6 +2930,12 @@ function init() {
   els.exportFormatSelect.addEventListener('change', updateExportControls);
   els.downloadBtn.addEventListener('click', handleDownload);
 
+  setupMobileTabs();
+  setupShareButton();
+  setupPWAInstall();
+  setupOnlineStatus();
+  registerServiceWorker();
+
   window.addEventListener('load', () => {
     checkExternalLibraries();
     const resolved = getResolvedLanguage();
@@ -2848,6 +2943,145 @@ function init() {
   });
 
   checkExternalLibraries();
+}
+
+function setupMobileTabs() {
+  if (!els.studioLayout || !els.mobileTabButtons.length) return;
+
+  const setActiveTab = (tabName) => {
+    els.studioLayout.setAttribute('data-mobile-tab', tabName);
+    closeAllMenus();
+    for (const btn of els.mobileTabButtons) {
+      const active = btn.dataset.tabTarget === tabName;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-selected', String(active));
+    }
+  };
+
+  for (const btn of els.mobileTabButtons) {
+    btn.addEventListener('click', () => {
+      const targetTab = btn.dataset.tabTarget || 'code';
+      setActiveTab(targetTab);
+    });
+  }
+}
+
+function setupShareButton() {
+  if (!els.shareBtn) return;
+  const supportsFileShare =
+    typeof navigator !== 'undefined' &&
+    typeof navigator.share === 'function' &&
+    typeof File === 'function';
+
+  if (supportsFileShare) {
+    els.shareBtn.hidden = false;
+    els.shareBtn.addEventListener('click', handleShare);
+  }
+}
+
+function setupPWAInstall() {
+  const btn = els.installAppBtn;
+  const labelEl = els.installAppLabel;
+  const modal = els.iosInstallModal;
+  const closeBtn = els.iosInstallCloseBtn;
+  if (!btn) return;
+
+  const isStandalone =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true ||
+    Boolean(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+
+  if (isStandalone) {
+    btn.hidden = true;
+    return;
+  }
+
+  let deferredPrompt = null;
+  const ua = window.navigator.userAgent.toLowerCase();
+  const isIOS = /iphone|ipad|ipod/.test(ua);
+
+  const openIOSModal = () => {
+    if (!modal) return;
+    modal.hidden = false;
+    if (closeBtn) closeBtn.focus();
+  };
+
+  const closeIOSModal = () => {
+    if (!modal) return;
+    modal.hidden = true;
+  };
+
+  if (isIOS) {
+    if (labelEl) labelEl.textContent = 'Install';
+    btn.hidden = false;
+  }
+
+  window.addEventListener('beforeinstallprompt', (event) => {
+    event.preventDefault();
+    deferredPrompt = event;
+    if (labelEl) labelEl.textContent = 'Install App';
+    btn.hidden = false;
+  });
+
+  window.addEventListener('appinstalled', () => {
+    deferredPrompt = null;
+    btn.hidden = true;
+    closeIOSModal();
+  });
+
+  btn.addEventListener('click', async () => {
+    if (deferredPrompt) {
+      await deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        deferredPrompt = null;
+        btn.hidden = true;
+      }
+      return;
+    }
+    if (isIOS) {
+      openIOSModal();
+    }
+  });
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', closeIOSModal);
+  }
+  if (modal) {
+    modal.addEventListener('click', (event) => {
+      if (event.target === modal) {
+        closeIOSModal();
+      }
+    });
+  }
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && modal && !modal.hidden) {
+      closeIOSModal();
+    }
+  });
+}
+
+function setupOnlineStatus() {
+  const toast = els.offlineToast;
+  if (!toast) return;
+
+  const syncOnline = () => {
+    toast.hidden = navigator.onLine !== false;
+  };
+
+  syncOnline();
+  window.addEventListener('online', syncOnline);
+  window.addEventListener('offline', syncOnline);
+}
+
+function registerServiceWorker() {
+  try {
+    if (typeof registerSW === 'function') {
+      registerSW({ immediate: true });
+    }
+  } catch {
+    // Ignore registration errors in restricted preview sandboxes
+  }
 }
 
 init();
